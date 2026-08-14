@@ -1,0 +1,228 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Wärmepumpe (Modbus) einrichten",
+        "description": "Gib einen Namen und die Verbindungsdaten der Wärmepumpensteuerung ein.",
+        "data": {
+          "name": "Name",
+          "host": "IP-Adresse",
+          "port": "Port",
+          "device_id": "Modbus-Geräte-ID",
+          "scan_interval": "Abfrageintervall (Sekunden)"
+        }
+      },
+      "reconfigure": {
+        "title": "Wärmepumpen-Verbindung aktualisieren",
+        "description": "Aktualisiere Namen und Verbindungsdaten der Wärmepumpensteuerung.",
+        "data": {
+          "name": "Name",
+          "host": "IP-Adresse",
+          "port": "Port",
+          "device_id": "Modbus-Geräte-ID"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zur Steuerung konnte nicht hergestellt werden.",
+      "already_configured": "Ein anderer Eintrag verwendet bereits diese IP-Adresse, Port und Geräte-ID."
+    },
+    "abort": {
+      "already_configured": "Dieses Gerät ist bereits konfiguriert.",
+      "reconfigure_successful": "Verbindungseinstellungen erfolgreich aktualisiert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "sections": {
+          "general": {
+            "name": "Allgemein",
+            "data": {
+              "scan_interval": "Abfrageintervall (Sekunden)"
+            }
+          },
+          "heating_circuit_1": {
+            "name": "Heizkreis 1",
+            "data": {
+              "heating_circuit_1_current_temp_source": "Heizkreis 1: Quelle Raumtemperatur",
+              "heating_circuit_1_current_temp_entity_id": "Raumtemperatur-Entity (wenn \"Home-Assistant-Entity verwenden\" ausgewählt)"
+            }
+          },
+          "heating_circuit_2": {
+            "name": "Heizkreis 2",
+            "data": {
+              "heating_circuit_2_current_temp_source": "Heizkreis 2: Quelle Raumtemperatur",
+              "heating_circuit_2_current_temp_entity_id": "Raumtemperatur-Entity (wenn \"Home-Assistant-Entity verwenden\" ausgewählt)"
+            }
+          },
+          "heating_circuit_3": {
+            "name": "Heizkreis 3",
+            "data": {
+              "heating_circuit_3_current_temp_source": "Heizkreis 3: Quelle Raumtemperatur",
+              "heating_circuit_3_current_temp_entity_id": "Raumtemperatur-Entity (wenn \"Home-Assistant-Entity verwenden\" ausgewählt)"
+            }
+          }
+        }
+      }
+    }
+  },
+  "entity": {
+    "water_heater": {
+      "dhw": {
+        "name": "Warmwasser",
+        "state": {
+          "off": "Aus",
+          "constant": "Konstant",
+          "week 1": "Zeitgesteuert Woche 1",
+          "week 2": "Zeitgesteuert Woche 2",
+          "eco": "Eco"
+        }
+      }
+    },
+    "climate": {
+      "heating_circuit_1": {
+        "name": "Heizkreis 1",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "week1": "Woche 1",
+              "week2": "Woche 2"
+            }
+          }
+        }
+      },
+      "heating_circuit_2": {
+        "name": "Heizkreis 2",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "week1": "Woche 1",
+              "week2": "Woche 2"
+            }
+          }
+        }
+      },
+      "heating_circuit_3": {
+        "name": "Heizkreis 3",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "week1": "Woche 1",
+              "week2": "Woche 2"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "hp_status": {
+        "name": "Status",
+        "state": {
+          "switched_off": "Abgeschalten",
+          "heating_mode": "Heizbetrieb",
+          "active_cooling": "Aktivkühlen",
+          "lock": "Sperre",
+          "hot_water": "Boiler laden",
+          "frost_protection": "Frostschutz",
+          "hp_temp_too_low": "WP-Temperatur zu tief",
+          "hp_flow_too_high": "WP-Vorlauf zu hoch",
+          "defrost": "Abtauen",
+          "passive_cooling": "Passivkühlen",
+          "hd_fault": "HD-Störung",
+          "low_pressure_fault": "Niederdruckstörung",
+          "restart_delay": "Wiedereinschaltverzögerung",
+          "energy_ore_block": "Energieerz.-Sperre",
+          "primary_lead_time": "Vorlaufzeit Primär",
+          "primary_run_on_time": "Nachlaufzeit Primär",
+          "mop": "MOP",
+          "unsuccessful_defrost": "Erfolglose Abtauung",
+          "condenser_pump_lead_time": "Vorlaufzeit Kondenserpumpe",
+          "inverter_modbus_fault": "Störung Inverter/Modbus-Kommunikation",
+          "groundwater_frost_protection": "Grundwasser Frostschutz",
+          "flow_rate_wq_gw_circuit": "Durchfluss WQ/GW-Kreis",
+          "compressor_limitation": "Begrenzung Verdichter",
+          "preheat_compressor_oil": "Kompressoröl vorheizen",
+          "cold_start": "Kaltstart",
+          "machine_not_configured": "Maschine nicht konfiguriert",
+          "unknown_status": "Unbekannter Status"
+        }
+      },
+      "outdoor_temp": {
+        "name": "Außentemperaturfühler"
+      },
+      "buffer_temp": {
+        "name": "Pufferspeichertemperatur"
+      },
+      "flow_temp_hc1": {
+        "name": "Vorlauf Ist-Temperatur Heizkreis 1"
+      },
+      "supply_target_temp_hc1": {
+        "name": "Vorlauf Soll-Temperatur Heizkreis 1"
+      },
+      "heat_quantity_heat_generator": {
+        "name": "Wärmemenge Wärmeerzeuger"
+      },
+      "heat_quantity_heating": {
+        "name": "Wärmemenge Heizen"
+      },
+      "heat_quantity_hot_water": {
+        "name": "Wärmemenge Warmwasser"
+      },
+      "switching_cycles_heat_generator": {
+        "name": "Schaltzyklen Wärmeerzeuger"
+      },
+      "heat_generator_target_temp": {
+        "name": "Wärmeerzeuger Soll-Temperatur"
+      },
+      "heat_generator_actual_temp": {
+        "name": "Wärmeerzeuger Ist-Temperatur"
+      },
+      "heat_generator_status_code": {
+        "name": "Wärmeerzeuger Status-Code"
+      },
+      "controller_error_code": {
+        "name": "Fehlercode vom Automaten"
+      },
+      "return_temp_heat_generator": {
+        "name": "Wärmeerzeuger Rücklauftemperatur"
+      },
+      "modulation": {
+        "name": "Modulation"
+      },
+      "operating_hours_heat_generator_above_50": {
+        "name": "Betriebsstunden Wärmeerzeuger >50%"
+      },
+      "switching_cycles_heat_generator_above_50": {
+        "name": "Schaltzyklen Wärmeerzeuger >50%"
+      },
+      "current_power_output": {
+        "name": "Aktuelle Leistungsabgabe"
+      },
+      "mixing_valve_hc1": {
+        "name": "Mischer Heizkreis 1"
+      },
+      "electrical_power_input_heat_generator": {
+        "name": "Aktuelle elektrische Leistungsaufnahme Wärmeerzeuger"
+      },
+      "total_electrical_energy_heat_generator": {
+        "name": "Elektrische Gesamtenergie Wärmeerzeuger"
+      },
+      "cop": {
+        "name": "Leistungszahl (COP)"
+      },
+      "operating_hours_heat_generator": {
+        "name": "Betriebsstunden Wärmeerzeuger"
+      }
+    }
+  },
+  "selector": {
+    "current_temp_source": {
+      "options": {
+        "none": "Keine Ist-Temperatur anzeigen",
+        "modbus": "Von der Wärmepumpe lesen (Modbus-Raumfühler)",
+        "entity": "Home-Assistant-Entity verwenden"
+      }
+    }
+  }
+}

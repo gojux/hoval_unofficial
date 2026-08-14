@@ -1,0 +1,54 @@
+{
+  "entity": {
+    "water_heater": {
+      "dhw": {
+        "default": "mdi:water-boiler",
+        "state": {
+          "off": "mdi:water-boiler-off",
+          "constant": "mdi:water-boiler",
+          "week 1": "mdi:water-boiler-auto",
+          "week 2": "mdi:water-boiler-auto",
+          "eco": "mdi:leaf"
+        }
+      }
+    },
+    "climate": {
+      "heating_circuit_1": {
+        "state_attributes": {
+          "preset_mode": {
+            "default": "mdi:help-circle-outline",
+            "state": {
+              "week1": "mdi:numeric-1-circle-outline",
+              "week2": "mdi:numeric-2-circle-outline",
+              "eco": "mdi:leaf"
+            }
+          }
+        }
+      },
+      "heating_circuit_2": {
+        "state_attributes": {
+          "preset_mode": {
+            "default": "mdi:help-circle-outline",
+            "state": {
+              "week1": "mdi:numeric-1-circle-outline",
+              "week2": "mdi:numeric-2-circle-outline",
+              "eco": "mdi:leaf"
+            }
+          }
+        }
+      },
+      "heating_circuit_3": {
+        "state_attributes": {
+          "preset_mode": {
+            "default": "mdi:help-circle-outline",
+            "state": {
+              "week1": "mdi:numeric-1-circle-outline",
+              "week2": "mdi:numeric-2-circle-outline",
+              "eco": "mdi:leaf"
+            }
+          }
+        }
+      }
+    }
+  }
+}

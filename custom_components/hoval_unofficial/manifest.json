@@ -1,0 +1,11 @@
+{
+  "domain": "hoval_unofficial",
+  "name": "Hoval Heat Pump Integration (unofficial)",
+  "codeowners": ["@gojux"],
+  "config_flow": true,
+  "documentation": "https://community.home-assistant.io/t/hoval-belaria-integration-gateway/692870/26",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/gojux/hoval_unofficial/issues",
+  "requirements": ["pymodbus>=3.11.0"],
+  "version": "0.1.0"
+}

@@ -1,0 +1,228 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Heat Pump (Modbus)",
+        "description": "Enter a name and the connection details of the heat pump controller.",
+        "data": {
+          "name": "Name",
+          "host": "IP address",
+          "port": "Port",
+          "device_id": "Modbus device ID",
+          "scan_interval": "Polling interval (seconds)"
+        }
+      },
+      "reconfigure": {
+        "title": "Update Heat Pump connection",
+        "description": "Update the name and connection details of the heat pump controller.",
+        "data": {
+          "name": "Name",
+          "host": "IP address",
+          "port": "Port",
+          "device_id": "Modbus device ID"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the controller.",
+      "already_configured": "Another entry already uses this IP address, port and device ID."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "reconfigure_successful": "Connection settings updated successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "sections": {
+          "general": {
+            "name": "General",
+            "data": {
+              "scan_interval": "Polling interval (seconds)"
+            }
+          },
+          "heating_circuit_1": {
+            "name": "Heating circuit 1",
+            "data": {
+              "heating_circuit_1_current_temp_source": "Heating circuit 1: room temperature source",
+              "heating_circuit_1_current_temp_entity_id": "Room temperature entity (when \"Use a Home Assistant entity\" is selected)"
+            }
+          },
+          "heating_circuit_2": {
+            "name": "Heating circuit 2",
+            "data": {
+              "heating_circuit_2_current_temp_source": "Heating circuit 2: room temperature source",
+              "heating_circuit_2_current_temp_entity_id": "Room temperature entity (when \"Use a Home Assistant entity\" is selected)"
+            }
+          },
+          "heating_circuit_3": {
+            "name": "Heating circuit 3",
+            "data": {
+              "heating_circuit_3_current_temp_source": "Heating circuit 3: room temperature source",
+              "heating_circuit_3_current_temp_entity_id": "Room temperature entity (when \"Use a Home Assistant entity\" is selected)"
+            }
+          }
+        }
+      }
+    }
+  },
+  "selector": {
+    "current_temp_source": {
+      "options": {
+        "none": "Don't show a current temperature",
+        "modbus": "Read from Heat Pump (Modbus room sensor)",
+        "entity": "Use a Home Assistant entity"
+      }
+    }
+  },
+  "entity": {
+    "water_heater": {
+      "dhw": {
+        "name": "Water heater",
+        "state": {
+          "off": "Off",
+          "constant": "Constant",
+          "week 1": "Schedule week 1",
+          "week 2": "Schedule week 2",
+          "eco": "Eco"
+        }
+      }
+    },
+    "climate": {
+      "heating_circuit_1": {
+        "name": "Heating circuit 1",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "week1": "Week 1",
+              "week2": "Week 2"
+            }
+          }
+        }
+      },
+      "heating_circuit_2": {
+        "name": "Heating circuit 2",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "week1": "Week 1",
+              "week2": "Week 2"
+            }
+          }
+        }
+      },
+      "heating_circuit_3": {
+        "name": "Heating circuit 3",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "week1": "Week 1",
+              "week2": "Week 2"
+            }
+          }
+        }
+      }
+    },
+    "sensor": {
+      "hp_status": {
+        "name": "Status",
+        "state": {
+          "switched_off": "Switched off",
+          "heating_mode": "Heating mode",
+          "active_cooling": "Active cooling",
+          "lock": "Lock",
+          "hot_water": "Hot water",
+          "frost_protection": "Frost protection",
+          "hp_temp_too_low": "HP temperature too low",
+          "hp_flow_too_high": "HP flow too high",
+          "defrost": "Defrost",
+          "passive_cooling": "Passive cooling",
+          "hd_fault": "HD fault",
+          "low_pressure_fault": "Low pressure fault",
+          "restart_delay": "Restart delay",
+          "energy_ore_block": "Energy ore block",
+          "primary_lead_time": "Primary lead time",
+          "primary_run_on_time": "Primary run-on time",
+          "mop": "MOP",
+          "unsuccessful_defrost": "Unsuccessful defrost",
+          "condenser_pump_lead_time": "Condenser pump lead time",
+          "inverter_modbus_fault": "Inverter/Modbus communication fault",
+          "groundwater_frost_protection": "Groundwater frost protection",
+          "flow_rate_wq_gw_circuit": "Flow rate WQ/GW circuit",
+          "compressor_limitation": "Compressor limitation",
+          "preheat_compressor_oil": "Preheat compressor oil",
+          "cold_start": "Cold start",
+          "machine_not_configured": "Machine not configured",
+          "unknown_status": "Unknown status"
+        }
+      },
+      "outdoor_temp": {
+        "name": "Outdoor temperature"
+      },
+      "buffer_temp": {
+        "name": "Buffer temperature"
+      },
+      "flow_temp_hc1": {
+        "name": "Current flow temperature HC1"
+      },
+      "supply_target_temp_hc1": {
+        "name": "Supply target temperature HC1"
+      },
+      "heat_quantity_heat_generator": {
+        "name": "Heat quantity heat generator"
+      },
+      "heat_quantity_heating": {
+        "name": "Heat quantity heating"
+      },
+      "heat_quantity_hot_water": {
+        "name": "Heat quantity hot water"
+      },
+      "switching_cycles_heat_generator": {
+        "name": "Switching cycles heat generator"
+      },
+      "heat_generator_target_temp": {
+        "name": "Heat generator target temperature"
+      },
+      "heat_generator_actual_temp": {
+        "name": "Heat generator actual temperature"
+      },
+      "heat_generator_status_code": {
+        "name": "Heat generator status code"
+      },
+      "controller_error_code": {
+        "name": "Error code from controller"
+      },
+      "return_temp_heat_generator": {
+        "name": "Return temperature heat generator"
+      },
+      "modulation": {
+        "name": "Modulation"
+      },
+      "operating_hours_heat_generator_above_50": {
+        "name": "Operating hours heat generator >50%"
+      },
+      "switching_cycles_heat_generator_above_50": {
+        "name": "Switching cycles heat generator >50%"
+      },
+      "current_power_output": {
+        "name": "Current power output"
+      },
+      "mixing_valve_hc1": {
+        "name": "Mixing valve HC1"
+      },
+      "electrical_power_input_heat_generator": {
+        "name": "Current electrical power input heat generator"
+      },
+      "total_electrical_energy_heat_generator": {
+        "name": "Total electrical energy heat generator"
+      },
+      "cop": {
+        "name": "Coefficient of Performance (COP)"
+      },
+      "operating_hours_heat_generator": {
+        "name": "Operating hours heat generator"
+      }
+    }
+  }
+}
