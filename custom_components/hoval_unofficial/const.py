@@ -360,8 +360,8 @@ DHW_MODE_WEEK2 = 2
 DHW_MODE_ECO = 6
 
 DHW_STATE_CONSTANT = "constant"
-DHW_STATE_WEEK1 = "week 1"
-DHW_STATE_WEEK2 = "week 2"
+DHW_STATE_WEEK1 = "week_1"
+DHW_STATE_WEEK2 = "week_2"
 
 
 # DHW operating mode <-> Home Assistant water_heater operation mode mapping.

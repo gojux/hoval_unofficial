@@ -6,8 +6,8 @@
         "state": {
           "off": "mdi:water-boiler-off",
           "constant": "mdi:water-boiler",
-          "week 1": "mdi:water-boiler-auto",
-          "week 2": "mdi:water-boiler-auto",
+          "week_1": "mdi:water-boiler-auto",
+          "week_2": "mdi:water-boiler-auto",
           "eco": "mdi:leaf"
         }
       }

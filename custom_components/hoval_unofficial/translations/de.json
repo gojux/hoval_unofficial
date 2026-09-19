@@ -74,8 +74,8 @@
         "state": {
           "off": "Aus",
           "constant": "Konstant",
-          "week 1": "Zeitgesteuert Woche 1",
-          "week 2": "Zeitgesteuert Woche 2",
+          "week_1": "Zeitgesteuert Woche 1",
+          "week_2": "Zeitgesteuert Woche 2",
           "eco": "Eco"
         }
       }

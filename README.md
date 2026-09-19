@@ -1,5 +1,7 @@
 # Hoval Heat Pump Integration (unofficial)
 
+![Hoval Heat Pump Integration (unofficial)](images/logo.png)
+
 [GitHub repository](https://github.com/gojux/hoval_unofficial) — please
 report issues or feature requests there.
 
@@ -9,6 +11,19 @@ entities — sensors, a domestic hot water (DHW) control, and climate
 entities for up to 3 room heating circuits.
 
 Setup is done entirely through the Home Assistant UI — no YAML required.
+
+## Disclaimer
+
+This is an **unofficial**, community-developed integration and is **not
+affiliated with, endorsed by, or supported by Hoval**. "Hoval" and any
+related trademarks are the property of their respective owner.
+
+This software is provided **"as is", without warranty of any kind**, and
+is used **entirely at your own risk**. The author(s) assume **no
+liability** for any damage, data loss, equipment malfunction, or other
+harm resulting from the use of this integration, including but not
+limited to unintended interaction with your heat pump's Modbus
+interface.
 
 For architecture details, implementation notes, and instructions on
 adapting this integration to a different heat pump model, see
@@ -23,12 +38,26 @@ environment, make sure `pymodbus>=3.11.0` is installed.
 
 ## Installation
 
+### Via HACS
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=gojux&repository=hoval_unofficial&category=integration)
+
+Requires [HACS](https://hacs.xyz) to be installed. Clicking the button
+above adds this repository to HACS on your Home Assistant instance;
+confirm the dialog there, then install the integration from HACS and
+restart Home Assistant.
+
+### Manual
+
 1. Copy `custom_components/hoval_unofficial` into the
    `config/custom_components/` directory of your Home Assistant instance.
 2. Restart Home Assistant.
-3. **Settings → Devices & Services → Add Integration** → search for
+
+### Setup
+
+1. **Settings → Devices & Services → Add Integration** → search for
    "Hoval Heat Pump Integration (unofficial)".
-4. Enter in the dialog:
+2. Enter in the dialog:
    - **Name** for this heat pump (used as the device name in HA)
    - **IP address** of the controller
    - **Port** (default: 502)

@@ -80,8 +80,8 @@ class HovalWaterHeater(
     water_heater operation modes (see DHW_MODE_TO_OPERATION in const.py):
       - "Off"      -> STATE_OFF
       - "Constant" -> "constant"   (manual, continuous heating)
-      - "Week 1"   -> "week 1"     (schedule program 1)
-      - "Week 2"   -> "week 2"     (schedule program 2)
+      - "Week 1"   -> "week_1"     (schedule program 1)
+      - "Week 2"   -> "week_2"     (schedule program 2)
       - "Eco"      -> STATE_ECO    (efficient, schedule-driven operation)
 
     "Constant" and "Eco" each have their own target-temperature setpoint

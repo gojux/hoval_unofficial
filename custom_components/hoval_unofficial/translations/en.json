@@ -83,8 +83,8 @@
         "state": {
           "off": "Off",
           "constant": "Constant",
-          "week 1": "Schedule week 1",
-          "week 2": "Schedule week 2",
+          "week_1": "Schedule week 1",
+          "week_2": "Schedule week 2",
           "eco": "Eco"
         }
       }
