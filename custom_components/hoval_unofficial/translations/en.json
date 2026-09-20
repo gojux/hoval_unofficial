@@ -208,6 +208,12 @@
       "current_power_output": {
         "name": "Current power output"
       },
+      "current_cooling_power": {
+        "name": "Current cooling power"
+      },
+      "cooling_energy": {
+        "name": "Cooling energy"
+      },
       "mixing_valve_hc1": {
         "name": "Mixing valve HC1"
       },
