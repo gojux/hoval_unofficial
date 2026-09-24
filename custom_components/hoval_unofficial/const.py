@@ -83,6 +83,7 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         name="Heat generator target temperature",
         address=18724,  # same register as 1531
         data_type="int16",
+        scale=0.1,
         unit="°C",
         device_class="temperature",
     ),
