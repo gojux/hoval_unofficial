@@ -59,6 +59,14 @@ cycle -- no reload or restart needed. If no context is registered yet
 are set up), the coordinator falls back to polling everything, since being
 unable to determine what's needed should never mean "fetch nothing".
 
+The registers to poll are grouped into blocks of adjacent or overlapping
+addresses (`build_read_blocks()`), and each block is read with a single
+request, since the controller's Modbus gateway can drop connections under a
+long series of single-register requests. Blocks never span a gap between
+defined registers. If a block read returns an error response, its
+registers are read one by one so that a single unreadable register doesn't
+hide the others.
+
 This also means write-only registers (e.g.
 `write_normal_setpoint_reg`/`write_eco_setpoint_reg` per heating circuit,
 `DHW_NORMAL_TARGET_TEMP_REGISTER`/`DHW_ECO_TARGET_TEMP_REGISTER`) are
