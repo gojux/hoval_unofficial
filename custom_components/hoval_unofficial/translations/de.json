@@ -199,6 +199,12 @@
       "current_power_output": {
         "name": "Aktuelle Leistungsabgabe"
       },
+      "current_cooling_power": {
+        "name": "Aktuelle Kühlleistung"
+      },
+      "cooling_energy": {
+        "name": "Kältemenge Kühlen"
+      },
       "mixing_valve_hc1": {
         "name": "Mischer Heizkreis 1"
       },
