@@ -194,9 +194,9 @@ anyone else on your network.
 - **Cooling** is only exposed through two sensors (current cooling power
   and cooling energy), which are disabled by default — enable them under
   **Settings → Devices & Services → this integration → Entities** if your
-  installation supports cooling. Controlling the cooling mode isn't
-  implemented; the author doesn't have a cooling-capable installation to
-  test against — contributions welcome if you do.
+  installation supports cooling. The author doesn't have a
+  cooling-capable installation to test against — contributions welcome if
+  you do.
 - **Smart Grid control** (e.g. SG-Ready style external control inputs)
   isn't currently exposed by this integration.
 
