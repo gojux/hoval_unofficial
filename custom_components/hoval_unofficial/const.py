@@ -712,3 +712,41 @@ HEAT_PUMP_STATUS_OPTIONS: list[str] = [
     *HEAT_PUMP_STATUS_MAP.values(),
     HEAT_PUMP_STATUS_UNKNOWN,
 ]
+
+# --------------------------------------------------------------------------
+# SMART GRID CONTROL REGISTER
+#
+# Selects which input activates the controller's "Smart Grid" preferred-
+# operation mode (Hoval calls this "Systembus" register). Used by the
+# "select" entity in select.py.
+# --------------------------------------------------------------------------
+
+SMART_GRID_CONTROL_REGISTER = RegisterDef(
+    key="smart_grid_control",
+    name="Smart Grid Control",
+    address=27546,
+    data_type="uint16",
+    writable=True,
+)
+
+# Polled together with SENSOR_REGISTERS/NUMBER_REGISTERS/DHW_REGISTERS by the
+# coordinator, but kept as its own list since it needs the same code <-> key
+# mapping as DHW/heating circuit modes instead of a generic numeric value.
+SMART_GRID_REGISTERS: list[RegisterDef] = [SMART_GRID_CONTROL_REGISTER]
+
+SMART_GRID_CONTROL_OFF = "off"
+SMART_GRID_CONTROL_INPUT_CONTACTS = "input_contacts"
+SMART_GRID_CONTROL_SYSTEM_BUS = "system_bus"
+SMART_GRID_CONTROL_REDUCED_AVAILABLE_POWER = "reduced_available_power"
+
+# Raw register value <-> select entity option key.
+SMART_GRID_CONTROL_MAP: dict[int, str] = {
+    0: SMART_GRID_CONTROL_OFF,
+    1: SMART_GRID_CONTROL_INPUT_CONTACTS,
+    2: SMART_GRID_CONTROL_SYSTEM_BUS,
+    3: SMART_GRID_CONTROL_REDUCED_AVAILABLE_POWER,
+}
+SMART_GRID_CONTROL_OPTION_TO_VALUE: dict[str, int] = {
+    option: value for value, option in SMART_GRID_CONTROL_MAP.items()
+}
+SMART_GRID_CONTROL_OPTIONS: list[str] = list(SMART_GRID_CONTROL_MAP.values())

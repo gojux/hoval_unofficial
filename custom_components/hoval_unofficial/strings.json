@@ -124,6 +124,17 @@
         }
       }
     },
+    "select": {
+      "smart_grid_control": {
+        "name": "Smart Grid control",
+        "state": {
+          "off": "Off",
+          "input_contacts": "Input contacts",
+          "system_bus": "System bus",
+          "reduced_available_power": "Reduced available power"
+        }
+      }
+    },
     "sensor": {
       "hp_status": {
         "name": "Status",

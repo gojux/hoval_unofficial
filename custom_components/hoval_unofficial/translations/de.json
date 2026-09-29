@@ -115,6 +115,17 @@
         }
       }
     },
+    "select": {
+      "smart_grid_control": {
+        "name": "Smart-Grid-Steuerung",
+        "state": {
+          "off": "Aus",
+          "input_contacts": "Eingangskontakte",
+          "system_bus": "Systembus",
+          "reduced_available_power": "Verfügbare Leistung gedämpft"
+        }
+      }
+    },
     "sensor": {
       "hp_status": {
         "name": "Status",
