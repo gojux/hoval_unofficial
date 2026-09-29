@@ -84,7 +84,7 @@ entry's three-dot menu → **Reconfigure**.
   Services → this integration → Entities** (they're created but hidden
   by default, since not everyone has more than one circuit).
 - **Smart Grid control** — two `select` entities and six `number` offset
-  entities to drive the controller's Smart Grid ("Vorzugsbetrieb")
+  entities to drive the controller's Smart Grid ("preferred operation")
   function. Disabled by default; see
   [Using Smart Grid control](#using-smart-grid-control) below.
 
@@ -149,8 +149,8 @@ new mode's actual setpoint.
 These entities are disabled by default — enable the ones you need under
 **Settings → Devices & Services → this integration → Entities**.
 
-To activate the controller's Smart Grid ("Vorzugsbetrieb") function, set,
-in this order:
+To activate the controller's Smart Grid ("preferred operation") function,
+set, in this order:
 
 1. **Smart Grid trigger** → **System bus**
 2. **Smart Grid control** → **Preferred operation**

@@ -849,7 +849,7 @@ SMART_GRID_OFFSET_DHW_REGISTER = RegisterDef(
     unit="K",
     writable=True,
     min_value=0,
-    max_value=30,
+    max_value=80,
     step=0.5,
     enabled_default=False,
 )
@@ -862,7 +862,7 @@ SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER = RegisterDef(
     unit="K",
     writable=True,
     min_value=0,
-    max_value=30,
+    max_value=90,
     step=0.5,
     enabled_default=False,
 )
