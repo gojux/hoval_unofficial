@@ -46,6 +46,7 @@ class HovalNumber(CoordinatorEntity[HovalModbusCoordinator], NumberEntity):
         self._attr_native_min_value = reg.min_value or 0
         self._attr_native_max_value = reg.max_value or 100
         self._attr_native_step = reg.step or 1
+        self._attr_entity_registry_enabled_default = reg.enabled_default
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,

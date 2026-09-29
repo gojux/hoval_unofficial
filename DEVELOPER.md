@@ -36,9 +36,9 @@ integration. For installation and usage as an end user, see
   dedicated `HovalStatusSensor` (device_class `enum`) that translates the
   raw numeric status code into a localized status text (English/German)
 - `number.py` – creates writable HA entities from `NUMBER_REGISTERS`
-- `select.py` – `HovalSmartGridControlSelect`, a writable `select` entity
-  for `SMART_GRID_CONTROL_REGISTER`, mapping the raw register value to a
-  stable option key via `SMART_GRID_CONTROL_MAP` (same pattern as
+- `select.py` – `HovalMappedSelect`, a generic writable `select` entity
+  used for the two Smart Grid registers (trigger/mode), mapping the raw
+  register value to a stable option key (same pattern as
   `HovalStatusSensor`'s status code translation)
 - `water_heater.py` – domestic hot water (DHW) control as a `water_heater`
   entity, with custom operation modes (`off` / `constant` / `week 1` /

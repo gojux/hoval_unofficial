@@ -83,6 +83,10 @@ entry's three-dot menu → **Reconfigure**.
   additional circuits, enable HC2/HC3 under **Settings → Devices &
   Services → this integration → Entities** (they're created but hidden
   by default, since not everyone has more than one circuit).
+- **Smart Grid control** — two `select` entities and six `number` offset
+  entities to drive the controller's Smart Grid ("Vorzugsbetrieb")
+  function. Disabled by default; see
+  [Using Smart Grid control](#using-smart-grid-control) below.
 
 ## Using the heating circuits (climate entities)
 
@@ -139,6 +143,28 @@ restriction and reasoning as for the heating circuits above — including
 the note above that after switching between Constant and Eco, the
 displayed target temperature can take a few minutes to catch up with the
 new mode's actual setpoint.
+
+## Using Smart Grid control
+
+These entities are disabled by default — enable the ones you need under
+**Settings → Devices & Services → this integration → Entities**.
+
+To activate the controller's Smart Grid ("Vorzugsbetrieb") function, set,
+in this order:
+
+1. **Smart Grid trigger** → **System bus**
+2. **Smart Grid control** → **Preferred operation**
+
+While active, the six **Smart Grid offset** number entities (heating
+circuits 1–3, DHW, buffer heating, buffer cooling) add a Kelvin offset on
+top of the controller's own setpoints — e.g. raising the DHW offset drives
+the heat pump toward its maximum DHW temperature without changing the
+underlying setpoint itself. Set **Smart Grid control** back to **Normal
+operation** to return to normal operation.
+
+Whether Smart Grid needs to be pre-configured by your installer or Hoval's
+service depends on the installation — some systems accept these registers
+without any prior setup, others may not.
 
 ## Options
 
@@ -197,8 +223,6 @@ anyone else on your network.
   installation supports cooling. The author doesn't have a
   cooling-capable installation to test against — contributions welcome if
   you do.
-- **Smart Grid control** (e.g. SG-Ready style external control inputs)
-  isn't currently exposed by this integration.
 
 ## Acknowledgements
 
