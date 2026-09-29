@@ -11,6 +11,7 @@ from .coordinator import HovalModbusCoordinator
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.WATER_HEATER,
     Platform.CLIMATE,
 ]

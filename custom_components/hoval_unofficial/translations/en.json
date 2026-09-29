@@ -124,6 +124,46 @@
         }
       }
     },
+    "select": {
+      "smart_grid_trigger": {
+        "name": "Smart Grid trigger",
+        "state": {
+          "off": "Off",
+          "input_contacts": "Input contacts",
+          "system_bus": "System bus",
+          "reduced_available_power": "Reduced available power"
+        }
+      },
+      "smart_grid_mode": {
+        "name": "Smart Grid control",
+        "state": {
+          "normal_operation": "Normal operation",
+          "preferred_operation": "Preferred operation",
+          "locked": "Locked",
+          "forced_consumption": "Forced consumption"
+        }
+      }
+    },
+    "number": {
+      "smart_grid_offset_hc1": {
+        "name": "Smart Grid offset heating circuit 1"
+      },
+      "smart_grid_offset_hc2": {
+        "name": "Smart Grid offset heating circuit 2"
+      },
+      "smart_grid_offset_hc3": {
+        "name": "Smart Grid offset heating circuit 3"
+      },
+      "smart_grid_offset_dhw": {
+        "name": "Smart Grid offset DHW"
+      },
+      "smart_grid_offset_buffer_heating": {
+        "name": "Smart Grid offset buffer (heating)"
+      },
+      "smart_grid_offset_buffer_cooling": {
+        "name": "Smart Grid offset buffer (cooling)"
+      }
+    },
     "sensor": {
       "hp_status": {
         "name": "Status",

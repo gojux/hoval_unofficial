@@ -115,6 +115,46 @@
         }
       }
     },
+    "select": {
+      "smart_grid_trigger": {
+        "name": "Smart Grid Auslöser",
+        "state": {
+          "off": "Aus",
+          "input_contacts": "Eingangskontakte",
+          "system_bus": "Systembus",
+          "reduced_available_power": "Verfügbare Leistung gedämpft"
+        }
+      },
+      "smart_grid_mode": {
+        "name": "Smart Grid Steuerung",
+        "state": {
+          "normal_operation": "Normalbetrieb",
+          "preferred_operation": "Vorzugsbetrieb",
+          "locked": "Gesperrt",
+          "forced_consumption": "Abnahmezwang"
+        }
+      }
+    },
+    "number": {
+      "smart_grid_offset_hc1": {
+        "name": "Smart Grid Offset Heizkreis 1"
+      },
+      "smart_grid_offset_hc2": {
+        "name": "Smart Grid Offset Heizkreis 2"
+      },
+      "smart_grid_offset_hc3": {
+        "name": "Smart Grid Offset Heizkreis 3"
+      },
+      "smart_grid_offset_dhw": {
+        "name": "Smart Grid Offset Warmwasser"
+      },
+      "smart_grid_offset_buffer_heating": {
+        "name": "Smart Grid Offset Puffer Heizen"
+      },
+      "smart_grid_offset_buffer_cooling": {
+        "name": "Smart Grid Offset Puffer Kühlen"
+      }
+    },
     "sensor": {
       "hp_status": {
         "name": "Status",

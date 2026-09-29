@@ -21,6 +21,7 @@ from .const import (
     DHW_REGISTERS,
     STATUS_REGISTERS,
     HEATING_CIRCUIT_REGISTERS,
+    SMART_GRID_REGISTERS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ ALL_REGISTERS: list[RegisterDef] = (
     + DHW_REGISTERS
     + STATUS_REGISTERS
     + HEATING_CIRCUIT_REGISTERS
+    + SMART_GRID_REGISTERS
 )
 
 # Modbus allows at most 125 registers per read request.

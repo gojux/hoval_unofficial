@@ -293,9 +293,8 @@ SENSOR_REGISTERS: list[RegisterDef] = [
 
 # Writable registers (e.g. setpoints) beyond the DHW/heating-circuit
 # setpoints already handled by water_heater.py/climate.py, exposed as
-# "number" entities. Empty for now -- add a RegisterDef here (with
-# writable=True) if your controller has additional writable values not
-# covered elsewhere.
+# "number" entities. Assembled at the end of this file, once the Smart Grid
+# offset registers below are defined.
 NUMBER_REGISTERS: list[RegisterDef] = []
 
 # --------------------------------------------------------------------------
@@ -459,6 +458,51 @@ PRESET_TO_CLIMATE_MODE: dict[str, int] = {
 # always active and selectable.
 CLIMATE_PRESET_OPTIONS: list[str] = list(CLIMATE_MODE_TO_PRESET.values())
 
+# Smart Grid offset (in Kelvin), applied on top of a heating circuit's own
+# setpoint while Smart Grid is in preferred operation -- see
+# SMART_GRID_MODE_REGISTER further below. Exposed as a writable "number"
+# entity per circuit (see HeatingCircuit.smart_grid_offset_reg,
+# NUMBER_REGISTERS), disabled by default.
+SMART_GRID_OFFSET_HC1_REGISTER = RegisterDef(
+    key="smart_grid_offset_hc1",
+    name="Smart Grid Offset Heating Circuit 1",
+    address=27528,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=12,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_HC2_REGISTER = RegisterDef(
+    key="smart_grid_offset_hc2",
+    name="Smart Grid Offset Heating Circuit 2",
+    address=27529,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=12,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_HC3_REGISTER = RegisterDef(
+    key="smart_grid_offset_hc3",
+    name="Smart Grid Offset Heating Circuit 3",
+    address=27530,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=12,
+    step=0.5,
+    enabled_default=False,
+)
+
 
 @dataclass
 class HeatingCircuit:
@@ -474,6 +518,11 @@ class HeatingCircuit:
     # None means the circuit has no such sensor (or its address isn't known
     # yet), in which case selecting that source simply yields no value.
     room_actual_temp_reg: RegisterDef | None = None
+    # This circuit's Smart Grid offset register (see
+    # SMART_GRID_OFFSET_HC1_REGISTER above) -- used by climate.py to
+    # compensate target_temperature writes for an active offset, the same
+    # way HovalWaterHeater does for DHW.
+    smart_grid_offset_reg: RegisterDef | None = None
 
 
 HEATING_CIRCUIT_1 = HeatingCircuit(
@@ -514,6 +563,7 @@ HEATING_CIRCUIT_1 = HeatingCircuit(
         address=1510,
         scale=0.1,
     ),
+    smart_grid_offset_reg=SMART_GRID_OFFSET_HC1_REGISTER,
     enabled_default=True,
 )
 HEATING_CIRCUIT_2 = HeatingCircuit(
@@ -554,6 +604,7 @@ HEATING_CIRCUIT_2 = HeatingCircuit(
         address=1511,
         scale=0.1,
     ),
+    smart_grid_offset_reg=SMART_GRID_OFFSET_HC2_REGISTER,
     enabled_default=False,
 )
 HEATING_CIRCUIT_3 = HeatingCircuit(
@@ -594,6 +645,7 @@ HEATING_CIRCUIT_3 = HeatingCircuit(
         address=1512,
         scale=0.1,
     ),
+    smart_grid_offset_reg=SMART_GRID_OFFSET_HC3_REGISTER,
     enabled_default=False,
 )
 
@@ -712,3 +764,129 @@ HEAT_PUMP_STATUS_OPTIONS: list[str] = [
     *HEAT_PUMP_STATUS_MAP.values(),
     HEAT_PUMP_STATUS_UNKNOWN,
 ]
+
+# --------------------------------------------------------------------------
+# SMART GRID REGISTERS
+#
+# To use Smart Grid, both registers below must be set: first
+# SMART_GRID_TRIGGER_REGISTER to "system_bus" (Modbus as the trigger
+# source), then SMART_GRID_MODE_REGISTER to "preferred_operation". Disabled
+# by default since most installations don't use Smart Grid. Used by the
+# "select" entities in select.py.
+# --------------------------------------------------------------------------
+
+SMART_GRID_TRIGGER_REGISTER = RegisterDef(
+    key="smart_grid_trigger",
+    name="Smart Grid Trigger",
+    address=27546,
+    data_type="uint16",
+    writable=True,
+    enabled_default=False,
+)
+
+SMART_GRID_TRIGGER_OFF = "off"
+SMART_GRID_TRIGGER_INPUT_CONTACTS = "input_contacts"
+SMART_GRID_TRIGGER_SYSTEM_BUS = "system_bus"
+SMART_GRID_TRIGGER_REDUCED_AVAILABLE_POWER = "reduced_available_power"
+
+# Raw register value <-> select entity option key.
+SMART_GRID_TRIGGER_MAP: dict[int, str] = {
+    0: SMART_GRID_TRIGGER_OFF,
+    1: SMART_GRID_TRIGGER_INPUT_CONTACTS,
+    2: SMART_GRID_TRIGGER_SYSTEM_BUS,
+    3: SMART_GRID_TRIGGER_REDUCED_AVAILABLE_POWER,
+}
+SMART_GRID_TRIGGER_OPTION_TO_VALUE: dict[str, int] = {
+    option: value for value, option in SMART_GRID_TRIGGER_MAP.items()
+}
+SMART_GRID_TRIGGER_OPTIONS: list[str] = list(SMART_GRID_TRIGGER_MAP.values())
+
+SMART_GRID_MODE_REGISTER = RegisterDef(
+    key="smart_grid_mode",
+    name="Smart Grid Mode",
+    address=27545,
+    data_type="uint16",
+    writable=True,
+    enabled_default=False,
+)
+
+SMART_GRID_MODE_NORMAL_OPERATION = "normal_operation"
+SMART_GRID_MODE_PREFERRED_OPERATION = "preferred_operation"
+SMART_GRID_MODE_LOCKED = "locked"
+SMART_GRID_MODE_FORCED_CONSUMPTION = "forced_consumption"
+
+# Raw register value <-> select entity option key.
+SMART_GRID_MODE_MAP: dict[int, str] = {
+    0: SMART_GRID_MODE_NORMAL_OPERATION,
+    1: SMART_GRID_MODE_PREFERRED_OPERATION,
+    2: SMART_GRID_MODE_LOCKED,
+    3: SMART_GRID_MODE_FORCED_CONSUMPTION,
+}
+SMART_GRID_MODE_OPTION_TO_VALUE: dict[str, int] = {
+    option: value for value, option in SMART_GRID_MODE_MAP.items()
+}
+SMART_GRID_MODE_OPTIONS: list[str] = list(SMART_GRID_MODE_MAP.values())
+
+# Polled together with SENSOR_REGISTERS/NUMBER_REGISTERS/DHW_REGISTERS by the
+# coordinator, but kept as its own list since these need the raw-value <->
+# option-key mapping above instead of a generic numeric value.
+SMART_GRID_REGISTERS: list[RegisterDef] = [
+    SMART_GRID_TRIGGER_REGISTER,
+    SMART_GRID_MODE_REGISTER,
+]
+
+# Offset values (in Kelvin) applied on top of the controller's own setpoints
+# while Smart Grid is in preferred operation -- see SMART_GRID_MODE_REGISTER
+# above. Exposed as writable "number" entities, disabled by default.
+# (The heating-circuit offsets are defined earlier, right before the
+# HeatingCircuit dataclass, since each circuit references its own.)
+SMART_GRID_OFFSET_DHW_REGISTER = RegisterDef(
+    key="smart_grid_offset_dhw",
+    name="Smart Grid Offset DHW",
+    address=27509,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=30,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER = RegisterDef(
+    key="smart_grid_offset_buffer_heating",
+    name="Smart Grid Offset Buffer (Heating)",
+    address=28839,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=30,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER = RegisterDef(
+    key="smart_grid_offset_buffer_cooling",
+    name="Smart Grid Offset Buffer (Cooling)",
+    address=28840,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=-30,
+    max_value=0,
+    step=0.5,
+    enabled_default=False,
+)
+
+NUMBER_REGISTERS.extend(
+    [
+        SMART_GRID_OFFSET_HC1_REGISTER,
+        SMART_GRID_OFFSET_HC2_REGISTER,
+        SMART_GRID_OFFSET_HC3_REGISTER,
+        SMART_GRID_OFFSET_DHW_REGISTER,
+        SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER,
+        SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER,
+    ]
+)
