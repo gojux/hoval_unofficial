@@ -41,6 +41,9 @@ from .const import (
     HVAC_TO_CLIMATE_MODE,
     PRESET_TO_CLIMATE_MODE,
     RegisterDef,
+    SMART_GRID_MODE_MAP,
+    SMART_GRID_MODE_PREFERRED_OPERATION,
+    SMART_GRID_MODE_REGISTER,
     current_temp_entity_key,
     current_temp_source_key,
 )
@@ -164,6 +167,12 @@ class HovalRoomClimate(
             and heating_circuit.room_actual_temp_reg is not None
         ):
             context.append(heating_circuit.room_actual_temp_reg.key)
+        # Needed by _active_smart_grid_offset() below, regardless of
+        # whether the corresponding select/number entities are enabled --
+        # see async_set_temperature().
+        if heating_circuit.smart_grid_offset_reg is not None:
+            context.append(SMART_GRID_MODE_REGISTER.key)
+            context.append(heating_circuit.smart_grid_offset_reg.key)
 
         super().__init__(coordinator, context=context)
         self._entry = entry
@@ -387,6 +396,25 @@ class HovalRoomClimate(
             return self._pending_temperature
         return self.coordinator.data.get(self._hc.read_setpoint_reg.key)
 
+    def _active_smart_grid_offset(self) -> float:
+        """This circuit's Smart Grid offset (see
+        HeatingCircuit.smart_grid_offset_reg) currently added by the
+        controller on top of the base setpoint, or 0 if Smart Grid isn't
+        in preferred operation or this circuit has no offset register.
+
+        read_setpoint_reg (read by target_temperature) always reflects
+        base setpoint + this offset while active -- see
+        async_set_temperature()."""
+        if self._hc.smart_grid_offset_reg is None:
+            return 0.0
+        raw_mode = self.coordinator.data.get(SMART_GRID_MODE_REGISTER.key)
+        if raw_mode is None:
+            return 0.0
+        if SMART_GRID_MODE_MAP.get(int(raw_mode)) != SMART_GRID_MODE_PREFERRED_OPERATION:
+            return 0.0
+        offset = self.coordinator.data.get(self._hc.smart_grid_offset_reg.key)
+        return offset if offset is not None else 0.0
+
     def _target_setpoint_register_for_current_mode(self) -> RegisterDef | None:
         """Which write-only setpoint register applies to the current mode:
         write_normal_setpoint_reg while HVACMode.HEAT ("Constant"),
@@ -571,7 +599,12 @@ class HovalRoomClimate(
         self._pending_temperature = temperature
         self._pending_temperature_since = dt_util.utcnow()
         self.async_write_ha_state()
-        await self.coordinator.async_write_value(target_reg, temperature)
+        # Subtract any active Smart Grid offset so the base setpoint we
+        # write, plus that offset, still equals the requested temperature
+        # -- see _active_smart_grid_offset().
+        await self.coordinator.async_write_value(
+            target_reg, temperature - self._active_smart_grid_offset()
+        )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Write a new operating mode (Off / Constant / Auto) to the controller.

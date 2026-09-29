@@ -458,6 +458,51 @@ PRESET_TO_CLIMATE_MODE: dict[str, int] = {
 # always active and selectable.
 CLIMATE_PRESET_OPTIONS: list[str] = list(CLIMATE_MODE_TO_PRESET.values())
 
+# Smart Grid offset (in Kelvin), applied on top of a heating circuit's own
+# setpoint while Smart Grid is in preferred operation -- see
+# SMART_GRID_MODE_REGISTER further below. Exposed as a writable "number"
+# entity per circuit (see HeatingCircuit.smart_grid_offset_reg,
+# NUMBER_REGISTERS), disabled by default.
+SMART_GRID_OFFSET_HC1_REGISTER = RegisterDef(
+    key="smart_grid_offset_hc1",
+    name="Smart Grid Offset Heating Circuit 1",
+    address=27528,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=12,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_HC2_REGISTER = RegisterDef(
+    key="smart_grid_offset_hc2",
+    name="Smart Grid Offset Heating Circuit 2",
+    address=27529,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=12,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_HC3_REGISTER = RegisterDef(
+    key="smart_grid_offset_hc3",
+    name="Smart Grid Offset Heating Circuit 3",
+    address=27530,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=12,
+    step=0.5,
+    enabled_default=False,
+)
+
 
 @dataclass
 class HeatingCircuit:
@@ -473,6 +518,11 @@ class HeatingCircuit:
     # None means the circuit has no such sensor (or its address isn't known
     # yet), in which case selecting that source simply yields no value.
     room_actual_temp_reg: RegisterDef | None = None
+    # This circuit's Smart Grid offset register (see
+    # SMART_GRID_OFFSET_HC1_REGISTER above) -- used by climate.py to
+    # compensate target_temperature writes for an active offset, the same
+    # way HovalWaterHeater does for DHW.
+    smart_grid_offset_reg: RegisterDef | None = None
 
 
 HEATING_CIRCUIT_1 = HeatingCircuit(
@@ -513,6 +563,7 @@ HEATING_CIRCUIT_1 = HeatingCircuit(
         address=1510,
         scale=0.1,
     ),
+    smart_grid_offset_reg=SMART_GRID_OFFSET_HC1_REGISTER,
     enabled_default=True,
 )
 HEATING_CIRCUIT_2 = HeatingCircuit(
@@ -553,6 +604,7 @@ HEATING_CIRCUIT_2 = HeatingCircuit(
         address=1511,
         scale=0.1,
     ),
+    smart_grid_offset_reg=SMART_GRID_OFFSET_HC2_REGISTER,
     enabled_default=False,
 )
 HEATING_CIRCUIT_3 = HeatingCircuit(
@@ -593,6 +645,7 @@ HEATING_CIRCUIT_3 = HeatingCircuit(
         address=1512,
         scale=0.1,
     ),
+    smart_grid_offset_reg=SMART_GRID_OFFSET_HC3_REGISTER,
     enabled_default=False,
 )
 
@@ -785,45 +838,8 @@ SMART_GRID_REGISTERS: list[RegisterDef] = [
 # Offset values (in Kelvin) applied on top of the controller's own setpoints
 # while Smart Grid is in preferred operation -- see SMART_GRID_MODE_REGISTER
 # above. Exposed as writable "number" entities, disabled by default.
-SMART_GRID_OFFSET_HC1_REGISTER = RegisterDef(
-    key="smart_grid_offset_hc1",
-    name="Smart Grid Offset Heating Circuit 1",
-    address=27528,
-    data_type="int16",
-    scale=0.1,
-    unit="K",
-    writable=True,
-    min_value=0,
-    max_value=12,
-    step=0.5,
-    enabled_default=False,
-)
-SMART_GRID_OFFSET_HC2_REGISTER = RegisterDef(
-    key="smart_grid_offset_hc2",
-    name="Smart Grid Offset Heating Circuit 2",
-    address=27529,
-    data_type="int16",
-    scale=0.1,
-    unit="K",
-    writable=True,
-    min_value=0,
-    max_value=12,
-    step=0.5,
-    enabled_default=False,
-)
-SMART_GRID_OFFSET_HC3_REGISTER = RegisterDef(
-    key="smart_grid_offset_hc3",
-    name="Smart Grid Offset Heating Circuit 3",
-    address=27530,
-    data_type="int16",
-    scale=0.1,
-    unit="K",
-    writable=True,
-    min_value=0,
-    max_value=12,
-    step=0.5,
-    enabled_default=False,
-)
+# (The heating-circuit offsets are defined earlier, right before the
+# HeatingCircuit dataclass, since each circuit references its own.)
 SMART_GRID_OFFSET_DHW_REGISTER = RegisterDef(
     key="smart_grid_offset_dhw",
     name="Smart Grid Offset DHW",
