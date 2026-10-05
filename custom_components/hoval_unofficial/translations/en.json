@@ -154,6 +154,15 @@
       "smart_grid_offset_hc3": {
         "name": "Smart Grid offset heating circuit 3"
       },
+      "smart_grid_offset_cooling_hc1": {
+        "name": "Smart Grid offset cooling heating circuit 1"
+      },
+      "smart_grid_offset_cooling_hc2": {
+        "name": "Smart Grid offset cooling heating circuit 2"
+      },
+      "smart_grid_offset_cooling_hc3": {
+        "name": "Smart Grid offset cooling heating circuit 3"
+      },
       "smart_grid_offset_dhw": {
         "name": "Smart Grid offset DHW"
       },
