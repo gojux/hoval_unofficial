@@ -1,0 +1,26 @@
+name: End-to-end test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Home Assistant and Modbus simulator
+        run: docker compose -f tests/e2e/docker-compose.yml up -d --build
+
+      - name: Run end-to-end checks
+        run: python3 tests/e2e/run_e2e.py
+
+      - name: Show Home Assistant logs on failure
+        if: failure()
+        run: docker compose -f tests/e2e/docker-compose.yml logs homeassistant
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f tests/e2e/docker-compose.yml down -v

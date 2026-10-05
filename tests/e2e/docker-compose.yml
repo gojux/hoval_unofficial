@@ -1,0 +1,14 @@
+services:
+  modbus-sim:
+    build: ./modbus-sim
+    expose:
+      - "502"
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.9.3
+    ports:
+      - "${HA_PORT:-8123}:8123"
+    volumes:
+      - ../../custom_components:/config/custom_components:ro
+    depends_on:
+      - modbus-sim
