@@ -502,6 +502,45 @@ SMART_GRID_OFFSET_HC3_REGISTER = RegisterDef(
     step=0.5,
     enabled_default=False,
 )
+SMART_GRID_OFFSET_COOLING_HC1_REGISTER = RegisterDef(
+    key="smart_grid_offset_cooling_hc1",
+    name="Smart Grid Offset Cooling Heating Circuit 1",
+    address=27531,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=-60,
+    max_value=0,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_COOLING_HC2_REGISTER = RegisterDef(
+    key="smart_grid_offset_cooling_hc2",
+    name="Smart Grid Offset Cooling Heating Circuit 2",
+    address=27532,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=-60,
+    max_value=0,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_COOLING_HC3_REGISTER = RegisterDef(
+    key="smart_grid_offset_cooling_hc3",
+    name="Smart Grid Offset Cooling Heating Circuit 3",
+    address=27533,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=-60,
+    max_value=0,
+    step=0.5,
+    enabled_default=False,
+)
 
 
 @dataclass
@@ -885,6 +924,9 @@ NUMBER_REGISTERS.extend(
         SMART_GRID_OFFSET_HC1_REGISTER,
         SMART_GRID_OFFSET_HC2_REGISTER,
         SMART_GRID_OFFSET_HC3_REGISTER,
+        SMART_GRID_OFFSET_COOLING_HC1_REGISTER,
+        SMART_GRID_OFFSET_COOLING_HC2_REGISTER,
+        SMART_GRID_OFFSET_COOLING_HC3_REGISTER,
         SMART_GRID_OFFSET_DHW_REGISTER,
         SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER,
         SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER,
