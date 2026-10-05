@@ -16,6 +16,10 @@ from .const import (
     HEAT_PUMP_STATUS_OPTIONS,
     HEAT_PUMP_STATUS_REGISTER,
     HEAT_PUMP_STATUS_UNKNOWN,
+    SMART_GRID_STATUS_MAP,
+    SMART_GRID_STATUS_OPTIONS,
+    SMART_GRID_STATUS_REGISTER,
+    SMART_GRID_STATUS_UNKNOWN,
 )
 from .coordinator import HovalModbusCoordinator
 
@@ -31,6 +35,7 @@ async def async_setup_entry(
         HovalSensor(coordinator, entry, reg) for reg in SENSOR_REGISTERS
     ]
     entities.append(HovalStatusSensor(coordinator, entry))
+    entities.append(HovalSmartGridStatusSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -117,3 +122,38 @@ class HovalStatusSensor(
         if raw_code is None:
             return None
         return {"raw_status_code": int(raw_code)}
+
+
+class HovalSmartGridStatusSensor(
+    CoordinatorEntity[HovalModbusCoordinator], SensorEntity
+):
+    """Smart Grid state reported by the controller, as a translated enum.
+
+    Disabled by default like the other Smart Grid entities. Raw values
+    outside SMART_GRID_STATUS_MAP are reported as SMART_GRID_STATUS_UNKNOWN.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = SMART_GRID_STATUS_REGISTER.key
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = SMART_GRID_STATUS_OPTIONS
+
+    def __init__(
+        self, coordinator: HovalModbusCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator, context=[SMART_GRID_STATUS_REGISTER.key])
+        self._attr_unique_id = f"{entry.entry_id}_{SMART_GRID_STATUS_REGISTER.key}"
+        self._attr_entity_registry_enabled_default = SMART_GRID_STATUS_REGISTER.enabled_default
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Hoval (Modbus)",
+            model="Heat Pump Controller",
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        raw_value = self.coordinator.data.get(SMART_GRID_STATUS_REGISTER.key)
+        if raw_value is None:
+            return None
+        return SMART_GRID_STATUS_MAP.get(int(raw_value), SMART_GRID_STATUS_UNKNOWN)

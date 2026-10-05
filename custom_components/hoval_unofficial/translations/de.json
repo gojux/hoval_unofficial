@@ -165,6 +165,17 @@
       }
     },
     "sensor": {
+      "smart_grid_status": {
+        "name": "Smart-Grid-Status",
+        "state": {
+          "normal_operation": "Normalbetrieb",
+          "preferred_operation": "Vorzugsbetrieb",
+          "locked": "Gesperrt",
+          "forced_consumption": "Abnahmezwang",
+          "inactive": "Smart Grid inaktiv",
+          "unknown": "Unbekannt"
+        }
+      },
       "hp_status": {
         "name": "Status",
         "state": {

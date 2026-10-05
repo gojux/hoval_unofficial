@@ -866,12 +866,38 @@ SMART_GRID_MODE_OPTION_TO_VALUE: dict[str, int] = {
 }
 SMART_GRID_MODE_OPTIONS: list[str] = list(SMART_GRID_MODE_MAP.values())
 
+SMART_GRID_STATUS_REGISTER = RegisterDef(
+    key="smart_grid_status",
+    name="Smart Grid Status",
+    address=27537,
+    data_type="uint16",
+    enabled_default=False,
+)
+
+SMART_GRID_STATUS_INACTIVE = "inactive"
+SMART_GRID_STATUS_UNKNOWN = "unknown"
+
+# Raw register value -> enum sensor state. Unlisted values fall back to
+# SMART_GRID_STATUS_UNKNOWN, since HA rejects enum states outside the options.
+SMART_GRID_STATUS_MAP: dict[int, str] = {
+    0: SMART_GRID_MODE_NORMAL_OPERATION,
+    1: SMART_GRID_MODE_PREFERRED_OPERATION,
+    2: SMART_GRID_MODE_LOCKED,
+    3: SMART_GRID_MODE_FORCED_CONSUMPTION,
+    255: SMART_GRID_STATUS_INACTIVE,
+}
+SMART_GRID_STATUS_OPTIONS: list[str] = [
+    *SMART_GRID_STATUS_MAP.values(),
+    SMART_GRID_STATUS_UNKNOWN,
+]
+
 # Polled together with SENSOR_REGISTERS/NUMBER_REGISTERS/DHW_REGISTERS by the
 # coordinator, but kept as its own list since these need the raw-value <->
 # option-key mapping above instead of a generic numeric value.
 SMART_GRID_REGISTERS: list[RegisterDef] = [
     SMART_GRID_TRIGGER_REGISTER,
     SMART_GRID_MODE_REGISTER,
+    SMART_GRID_STATUS_REGISTER,
 ]
 
 # Offset values (in Kelvin) applied on top of the controller's own setpoints
