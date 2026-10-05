@@ -81,7 +81,7 @@ def onboard() -> str:
     return tokens["access_token"]
 
 
-def add_integration(token: str) -> None:
+def add_integration(token: str) -> str:
     flow = request(
         "POST",
         "/api/config/config_entries/flow",
@@ -102,6 +102,17 @@ def add_integration(token: str) -> None:
     )
     if result.get("type") != "create_entry":
         raise SystemExit(f"Config flow did not create an entry: {result}")
+    return result["result"]["entry_id"]
+
+
+def check_diagnostics(token: str, entry_id: str) -> None:
+    raw = request("GET", f"/api/diagnostics/config_entry/{entry_id}", token=token)
+    text = json.dumps(raw)
+    if MODBUS_HOST in text:
+        raise SystemExit("Diagnostics leak the Modbus host")
+    if "register_values" not in text or "**REDACTED**" not in text:
+        raise SystemExit("Diagnostics download is missing expected content")
+    print("OK: diagnostics download works and redacts the host")
 
 
 def wait_for_states(token: str) -> list[dict]:
@@ -151,9 +162,10 @@ def check(states: list[dict]) -> None:
 def main() -> None:
     wait_for_home_assistant()
     token = onboard()
-    add_integration(token)
+    entry_id = add_integration(token)
     states = wait_for_states(token)
     check(states)
+    check_diagnostics(token, entry_id)
 
 
 if __name__ == "__main__":

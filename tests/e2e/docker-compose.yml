@@ -10,5 +10,6 @@ services:
       - "${HA_PORT:-8123}:8123"
     volumes:
       - ../../custom_components:/config/custom_components:ro
+      - ./ha-config/configuration.yaml:/config/configuration.yaml:ro
     depends_on:
       - modbus-sim
