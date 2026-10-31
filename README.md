@@ -76,6 +76,8 @@ entry's three-dot menu → **Reconfigure**.
   quantities, operating hours, COP, and a translated status sensor
   (shows the controller's current status as readable text in your HA
   language, e.g. "Heating mode" / "Defrost" / "Frost protection").
+  A diagnostic sensor per heating circuit shows its control strategy
+  (e.g. "Weather-compensated with room influence"); disabled by default.
 - **Domestic hot water (DHW)** — a `water_heater` entity showing tank
   temperature, target temperature, and operating mode.
 - **Room heating circuits (HC1/HC2/HC3)** — `climate` entities for up to

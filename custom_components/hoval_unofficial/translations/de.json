@@ -176,6 +176,18 @@
           "unknown": "Unbekannt"
         }
       },
+      "control_strategy": {
+        "name": "Regelstrategie Heizkreis {circuit}",
+        "state": {
+          "weather_compensated": "Reine Witterungsführung",
+          "weather_compensated_room_influence": "Witterungsführung mit Raumaufschaltung",
+          "room_control": "Reine Raumregelung",
+          "constant": "Konstantregelung",
+          "weather_compensated_cooling_constant": "Reine Witterungsführung Heizen + Konstantregelung Kühlen",
+          "weather_compensated_room_influence_cooling_constant": "Witterungsführung mit Raumaufschaltung Heizen + Konstantregelung Kühlen",
+          "unknown": "Unbekannt"
+        }
+      },
       "hp_status": {
         "name": "Status",
         "state": {

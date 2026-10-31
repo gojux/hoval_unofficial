@@ -542,6 +542,48 @@ SMART_GRID_OFFSET_COOLING_HC3_REGISTER = RegisterDef(
     enabled_default=False,
 )
 
+# Control strategy of a heating circuit (how the controller determines the
+# flow setpoint). Exposed as a disabled-by-default diagnostic enum sensor
+# per circuit, see HeatingCircuit.control_strategy_reg.
+CONTROL_STRATEGY_HC1_REGISTER = RegisterDef(
+    key="control_strategy_hc1",
+    name="Control Strategy Heating Circuit 1",
+    address=27510,
+    data_type="uint16",
+    enabled_default=False,
+)
+CONTROL_STRATEGY_HC2_REGISTER = RegisterDef(
+    key="control_strategy_hc2",
+    name="Control Strategy Heating Circuit 2",
+    address=27511,
+    data_type="uint16",
+    enabled_default=False,
+)
+CONTROL_STRATEGY_HC3_REGISTER = RegisterDef(
+    key="control_strategy_hc3",
+    name="Control Strategy Heating Circuit 3",
+    address=27512,
+    data_type="uint16",
+    enabled_default=False,
+)
+
+CONTROL_STRATEGY_UNKNOWN = "unknown"
+
+# Raw register value -> enum sensor state. Unlisted values fall back to
+# CONTROL_STRATEGY_UNKNOWN, since HA rejects enum states outside the options.
+CONTROL_STRATEGY_MAP: dict[int, str] = {
+    0: "weather_compensated",
+    1: "weather_compensated_room_influence",
+    2: "room_control",
+    3: "constant",
+    4: "weather_compensated_cooling_constant",
+    5: "weather_compensated_room_influence_cooling_constant",
+}
+CONTROL_STRATEGY_OPTIONS: list[str] = [
+    *CONTROL_STRATEGY_MAP.values(),
+    CONTROL_STRATEGY_UNKNOWN,
+]
+
 
 @dataclass
 class HeatingCircuit:
@@ -562,6 +604,10 @@ class HeatingCircuit:
     # compensate target_temperature writes for an active offset, the same
     # way HovalWaterHeater does for DHW.
     smart_grid_offset_reg: RegisterDef | None = None
+    # This circuit's control strategy register (see
+    # CONTROL_STRATEGY_HC1_REGISTER above), read by the diagnostic
+    # control strategy sensor in sensor.py.
+    control_strategy_reg: RegisterDef | None = None
 
 
 HEATING_CIRCUIT_1 = HeatingCircuit(
@@ -603,6 +649,7 @@ HEATING_CIRCUIT_1 = HeatingCircuit(
         scale=0.1,
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC1_REGISTER,
+    control_strategy_reg=CONTROL_STRATEGY_HC1_REGISTER,
     enabled_default=True,
 )
 HEATING_CIRCUIT_2 = HeatingCircuit(
@@ -644,6 +691,7 @@ HEATING_CIRCUIT_2 = HeatingCircuit(
         scale=0.1,
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC2_REGISTER,
+    control_strategy_reg=CONTROL_STRATEGY_HC2_REGISTER,
     enabled_default=False,
 )
 HEATING_CIRCUIT_3 = HeatingCircuit(
@@ -685,6 +733,7 @@ HEATING_CIRCUIT_3 = HeatingCircuit(
         scale=0.1,
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC3_REGISTER,
+    control_strategy_reg=CONTROL_STRATEGY_HC3_REGISTER,
     enabled_default=False,
 )
 
@@ -701,6 +750,8 @@ HEATING_CIRCUIT_REGISTERS = [
     )
 ] + [
     hc.room_actual_temp_reg for hc in HEATING_CIRCUITS if hc.room_actual_temp_reg is not None
+] + [
+    hc.control_strategy_reg for hc in HEATING_CIRCUITS if hc.control_strategy_reg is not None
 ]
 
 # --------------------------------------------------------------------------

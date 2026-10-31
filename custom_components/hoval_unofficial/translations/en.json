@@ -185,6 +185,18 @@
           "unknown": "Unknown"
         }
       },
+      "control_strategy": {
+        "name": "Control strategy heating circuit {circuit}",
+        "state": {
+          "weather_compensated": "Weather-compensated",
+          "weather_compensated_room_influence": "Weather-compensated with room influence",
+          "room_control": "Room control only",
+          "constant": "Constant control",
+          "weather_compensated_cooling_constant": "Weather-compensated heating + constant cooling",
+          "weather_compensated_room_influence_cooling_constant": "Weather-compensated heating with room influence + constant cooling",
+          "unknown": "Unknown"
+        }
+      },
       "hp_status": {
         "name": "Status",
         "state": {
