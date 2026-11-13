@@ -493,7 +493,7 @@ def check_cooling(token: str, entry_id: str) -> None:
 
     number_id = state["entity_id"]
     climate_id = entity_state(token, climate)["entity_id"]
-    mode = read_sim(MODE_REGISTER_HC1)
+    write_sim(MODE_REGISTER_HC1, 1)
     write_sim(HEATING_CONSTANT_FLOW_HC1, 690)
     call_service(token, "number", "set_value", {"entity_id": number_id, "value": 20})
     time.sleep(3)
@@ -506,12 +506,12 @@ def check_cooling(token: str, entry_id: str) -> None:
     expect_sim(COOLING_FLOW_SETPOINT_HC1, 200)
     if read_sim(HEATING_CONSTANT_FLOW_HC1) != 0:
         raise SystemExit("Cooling didn't set the constant heating flow setpoint to 0")
-    if read_sim(MODE_REGISTER_HC1) != mode:
-        raise SystemExit("Cooling changed the operating mode")
+    if read_sim(MODE_REGISTER_HC1) != 4:
+        raise SystemExit("Cooling didn't set the operating mode to Constant")
     state = wait_for_attribute(token, climate, lambda s: s["state"] == "cool")
     if "temperature" in state["attributes"]:
         raise SystemExit("A target temperature is shown while cooling")
-    print("OK: cool sets heating flow 0, writes the cooling flow and keeps the mode")
+    print("OK: cool sets heating flow 0 and mode Constant, then writes the cooling flow")
 
     call_service(token, "number", "set_value", {"entity_id": number_id, "value": 21})
     expect_sim(COOLING_FLOW_SETPOINT_HC1, 210)

@@ -35,6 +35,7 @@ from .const import (
     CLIMATE_PRESET_OPTIONS,
     CLIMATE_PRESET_WEEK1,
     CONTROL_STRATEGIES_COOLING,
+    CLIMATE_MODE_CONSTANT,
     COOLING_FLOW_DEFAULT,
     CURRENT_TEMP_SOURCE_ENTITY,
     CURRENT_TEMP_SOURCE_ENTITY_WRITE,
@@ -384,13 +385,13 @@ class HovalRoomClimate(
             return self._pending_cooling
         return self._raw_cooling_active()
 
-    async def _async_write_cooling(self, value: float) -> None:
+    async def _async_write_cooling(self, value: float, refresh: bool = True) -> None:
         """Write the cooling flow setpoint (0 turns cooling off)."""
         self._pending_cooling = value > 0
         self._pending_cooling_since = dt_util.utcnow()
         self.async_write_ha_state()
         await self.coordinator.async_write_value(
-            self._hc.cooling_flow_setpoint_reg, value
+            self._hc.cooling_flow_setpoint_reg, value, refresh
         )
 
     def _expire_stale_pending_mode(self) -> None:
@@ -425,12 +426,14 @@ class HovalRoomClimate(
         raw_mode = self.coordinator.data.get(self._hc.mode_reg.key)
         return int(raw_mode) if raw_mode is not None else None
 
-    async def _async_write_mode(self, raw_mode: int) -> None:
-        """Write a raw mode value, showing it optimistically right away."""
+    async def _async_write_mode(self, raw_mode: int, refresh: bool = True) -> None:
+        """Write a raw mode value, showing it optimistically right away.
+        Without refresh, a following write is expected to refresh: refreshes
+        requested shortly after each other are delayed by the coordinator."""
         self._pending_mode_value = raw_mode
         self._pending_mode_since = dt_util.utcnow()
         self.async_write_ha_state()
-        await self.coordinator.async_write_value(self._hc.mode_reg, raw_mode)
+        await self.coordinator.async_write_value(self._hc.mode_reg, raw_mode, refresh)
 
     def _expire_stale_pending_temperature(self) -> None:
         """Give up on an unconfirmed optimistic temperature change after
@@ -720,7 +723,7 @@ class HovalRoomClimate(
             await self._async_start_cooling()
             return
         if self._cooling_active():
-            await self._async_write_cooling(0)
+            await self._async_write_cooling(0, refresh=False)
 
         if hvac_mode == HVACMode.AUTO:
             raw_mode = PRESET_TO_CLIMATE_MODE.get(
@@ -735,8 +738,8 @@ class HovalRoomClimate(
     async def _async_start_cooling(self) -> None:
         """Turn cooling on with the flow temperature chosen in the number
         entity, after checking the control strategy still includes cooling.
-        The constant heating flow setpoint is set to 0 first, which cooling
-        requires. Leaves the mode register unchanged."""
+        The constant heating flow setpoint is set to 0 and the operating mode
+        to Constant first, which cooling requires."""
         if not self._cooling_supported:
             raise ServiceValidationError(
                 f"{self._hc.key} can't cool: its control strategy didn't include "
@@ -756,6 +759,8 @@ class HovalRoomClimate(
             await self.coordinator.async_read_value(heating_reg)
         ):
             await self.coordinator.async_write_value(heating_reg, 0, refresh=False)
+        if self._effective_raw_mode() != CLIMATE_MODE_CONSTANT:
+            await self._async_write_mode(CLIMATE_MODE_CONSTANT, refresh=False)
         minimum, maximum = self._cooling_flow_range
         value = self.coordinator.cooling_flow_setpoints.get(
             self._hc.key, COOLING_FLOW_DEFAULT

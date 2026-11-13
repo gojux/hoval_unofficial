@@ -741,6 +741,24 @@ HEATING_CIRCUIT_2 = HeatingCircuit(
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC2_REGISTER,
     control_strategy_reg=CONTROL_STRATEGY_HC2_REGISTER,
+    cooling_flow_setpoint_reg=RegisterDef(
+        key="cooling_flow_setpoint_hc2",
+        name="Cooling flow setpoint HC2",
+        address=23755,
+        scale=0.1,
+    ),
+    cooling_flow_min_reg=RegisterDef(
+        key="cooling_flow_min_hc2",
+        name="Minimum cooling flow temperature HC2",
+        address=29436,
+        scale=0.1,
+    ),
+    heating_constant_flow_reg=RegisterDef(
+        key="heating_constant_flow_hc2",
+        name="Constant heating flow setpoint HC2",
+        address=1491,
+        scale=0.1,
+    ),
     enabled_default=False,
 )
 HEATING_CIRCUIT_3 = HeatingCircuit(
@@ -783,6 +801,24 @@ HEATING_CIRCUIT_3 = HeatingCircuit(
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC3_REGISTER,
     control_strategy_reg=CONTROL_STRATEGY_HC3_REGISTER,
+    cooling_flow_setpoint_reg=RegisterDef(
+        key="cooling_flow_setpoint_hc3",
+        name="Cooling flow setpoint HC3",
+        address=23756,
+        scale=0.1,
+    ),
+    cooling_flow_min_reg=RegisterDef(
+        key="cooling_flow_min_hc3",
+        name="Minimum cooling flow temperature HC3",
+        address=29437,
+        scale=0.1,
+    ),
+    heating_constant_flow_reg=RegisterDef(
+        key="heating_constant_flow_hc3",
+        name="Constant heating flow setpoint HC3",
+        address=1492,
+        scale=0.1,
+    ),
     enabled_default=False,
 )
 
