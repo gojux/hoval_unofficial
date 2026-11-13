@@ -49,6 +49,11 @@
           }
         }
       }
+    },
+    "number": {
+      "cooling_flow_setpoint": {
+        "default": "mdi:snowflake-thermometer"
+      }
     }
   }
 }

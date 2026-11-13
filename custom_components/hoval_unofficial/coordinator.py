@@ -188,6 +188,9 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         # Heating circuit key -> RoomTempWriter (room_temp.py), for the
         # circuits sending a room temperature to the controller.
         self.room_temp_writers: dict[str, Any] = {}
+        # Heating circuit key -> cooling flow setpoint chosen by the user
+        # (number.py), written when the circuit is set to cool (climate.py).
+        self.cooling_flow_setpoints: dict[str, float] = {}
 
     async def _ensure_connected(self) -> None:
         if not self.client.connected:

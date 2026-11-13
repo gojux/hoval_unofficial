@@ -88,6 +88,29 @@ translatable, `_attr_translation_key` plus the matching
 `entity.<domain>.<key>.name` entry in `strings.json`/`translations/de.json`
 must be the *only* source of the name.
 
+## Cooling (per heating circuit)
+
+A circuit can cool if `HeatingCircuit.cooling_flow_setpoint_reg` is set
+and its control strategy is 4 or 5
+(`CONTROL_STRATEGIES_COOLING`). Whether it is, and the circuit's minimum
+cooling flow temperature, are read on the first setup and whenever the circuit
+is saved in the options (`async_read_cooling_options` in `__init__.py`), and
+stored in the options -- not polled, since they only change when the installer
+changes the controller's configuration.
+
+Cooling has no mode of its own on the controller: a flow setpoint above 0 in
+`cooling_flow_setpoint_reg` turns it on, 0 turns it off. `HovalRoomClimate`
+shows `HVACMode.COOL` whenever that register is above 0, and writes the value
+of `HovalCoolingFlowSetpointNumber` (kept by Home Assistant via
+`RestoreNumber`, shared through `coordinator.cooling_flow_setpoints`) when
+switched to cool, after re-reading the control strategy. Before that it sets
+`heating_constant_flow_reg` to 0 and the mode register to Constant if they
+aren't: with strategy 4/5 the circuit only cools while the constant heating
+flow setpoint is 0. Heating is weather
+compensated with these strategies and doesn't use that register (only
+strategy 3 does, which isn't supported), so it isn't restored when cooling
+stops.
+
 ## Room temperature source (per heating circuit)
 
 Each heating circuit's `current_temperature` can come from one of four

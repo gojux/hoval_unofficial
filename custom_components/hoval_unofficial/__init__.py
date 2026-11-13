@@ -1,16 +1,23 @@
 """Hoval Heat Pump Integration (unofficial)."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_SCAN_INTERVAL, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
     CONF_DEVICE_ID,
+    CONTROL_STRATEGIES_COOLING,
     CURRENT_TEMP_SOURCE_ENTITY_WRITE,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     HEATING_CIRCUITS,
+    HeatingCircuit,
+    cooling_flow_min_key,
+    cooling_supported_key,
     current_temp_entity_key,
     current_temp_source_key,
 )
@@ -44,6 +51,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    # Before the update listener is added, so storing these doesn't reload.
+    cooling_options = await async_read_cooling_options(
+        coordinator,
+        [hc for hc in HEATING_CIRCUITS if cooling_supported_key(hc) not in entry.options],
+    )
+    if cooling_options:
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, **cooling_options}
+        )
+
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -60,6 +77,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             writer.async_start()
 
     return True
+
+
+async def async_read_cooling_options(
+    coordinator: HovalModbusCoordinator, circuits: list[HeatingCircuit]
+) -> dict[str, Any]:
+    """Reads whether the circuits can cool, as options to store.
+
+    A circuit whose values can't be read is left out, so it is read again on
+    the next start.
+    """
+    options: dict[str, Any] = {}
+    for hc in circuits:
+        if hc.cooling_flow_setpoint_reg is None:
+            continue
+        try:
+            strategy = int(await coordinator.async_read_value(hc.control_strategy_reg))
+            minimum = await coordinator.async_read_value(hc.cooling_flow_min_reg)
+        except UpdateFailed:
+            continue
+        options[cooling_supported_key(hc)] = strategy in CONTROL_STRATEGIES_COOLING
+        options[cooling_flow_min_key(hc)] = round(minimum, 1)
+    return options
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

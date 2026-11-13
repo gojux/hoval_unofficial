@@ -35,6 +35,10 @@ SOURCE_ENTITY = "sensor.e2e_room_temperature"
 # The writer sends a change at most once per minute.
 WRITE_TIMEOUT_SECONDS = 90
 SETPOINT_REGISTERS = {1: 1493, 2: 1494, 3: 1495}
+MODE_REGISTER_HC1 = 1478
+COOLING_FLOW_SETPOINT_HC1 = 19482
+COOLING_FLOW_MIN_HC1 = 29435
+HEATING_CONSTANT_FLOW_HC1 = 1490
 # The room setpoint is sent after 5 minutes without a usable value.
 FALLBACK_TIMEOUT_SECONDS = 6 * 60
 
@@ -450,6 +454,92 @@ def check_sensor_detection(token: str, entry_id: str) -> None:
     print("OK: room influence without a room temperature needs confirmation")
 
 
+def call_service(token: str, domain: str, service: str, data: dict) -> None:
+    request("POST", f"/api/services/{domain}/{service}", body=data, token=token)
+
+
+def entity_state(token: str, suffix: str) -> dict:
+    states = request("GET", "/api/states", token=token)
+    return next(s for s in states if s["entity_id"].endswith(suffix))
+
+
+def wait_for_attribute(token: str, suffix: str, check) -> dict:
+    deadline = time.monotonic() + STATE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            state = entity_state(token, suffix)
+        except StopIteration:
+            state = None
+        if state is not None and check(state):
+            return state
+        time.sleep(2)
+    raise SystemExit(f"{suffix} did not reach the expected state: {state}")
+
+
+def check_cooling(token: str, entry_id: str) -> None:
+    climate = "_heating_circuit_1"
+    number = "_cooling_flow_setpoint_heating_circuit_1"
+    if "cool" in entity_state(token, climate)["attributes"]["hvac_modes"]:
+        raise SystemExit("Cooling is offered although the strategy has no cooling")
+
+    write_sim(STRATEGY_REGISTERS[1], 4)
+    write_sim(COOLING_FLOW_MIN_HC1, 160)
+    configure_circuit(token, entry_id, 1, {"current_temp_source": "none"})
+    wait_for_attribute(token, climate, lambda s: "cool" in s["attributes"]["hvac_modes"])
+    state = wait_for_attribute(token, number, lambda s: s["state"] == "18.0")
+    if state["attributes"]["min"] != 16 or state["attributes"]["max"] != 25:
+        raise SystemExit(f"Cooling flow range is wrong: {state['attributes']}")
+    print("OK: saving the circuit finds cooling and the minimum flow temperature")
+
+    number_id = state["entity_id"]
+    climate_id = entity_state(token, climate)["entity_id"]
+    write_sim(MODE_REGISTER_HC1, 1)
+    write_sim(HEATING_CONSTANT_FLOW_HC1, 690)
+    call_service(token, "number", "set_value", {"entity_id": number_id, "value": 20})
+    time.sleep(3)
+    if read_sim(COOLING_FLOW_SETPOINT_HC1) != 0:
+        raise SystemExit("The cooling flow setpoint was written while not cooling")
+
+    call_service(
+        token, "climate", "set_hvac_mode", {"entity_id": climate_id, "hvac_mode": "cool"}
+    )
+    expect_sim(COOLING_FLOW_SETPOINT_HC1, 200)
+    if read_sim(HEATING_CONSTANT_FLOW_HC1) != 0:
+        raise SystemExit("Cooling didn't set the constant heating flow setpoint to 0")
+    if read_sim(MODE_REGISTER_HC1) != 4:
+        raise SystemExit("Cooling didn't set the operating mode to Constant")
+    state = wait_for_attribute(token, climate, lambda s: s["state"] == "cool")
+    if "temperature" in state["attributes"]:
+        raise SystemExit("A target temperature is shown while cooling")
+    print("OK: cool sets heating flow 0 and mode Constant, then writes the cooling flow")
+
+    call_service(token, "number", "set_value", {"entity_id": number_id, "value": 21})
+    expect_sim(COOLING_FLOW_SETPOINT_HC1, 210)
+    print("OK: a changed flow temperature is sent while cooling")
+
+    call_service(
+        token, "climate", "set_hvac_mode", {"entity_id": climate_id, "hvac_mode": "heat"}
+    )
+    expect_sim(COOLING_FLOW_SETPOINT_HC1, 0)
+    expect_sim(MODE_REGISTER_HC1, 4)
+    if read_sim(HEATING_CONSTANT_FLOW_HC1) != 0:
+        raise SystemExit("Turning cooling off changed the constant heating flow setpoint")
+    print("OK: heat turns cooling off")
+
+    write_sim(STRATEGY_REGISTERS[1], 0)
+    try:
+        call_service(
+            token, "climate", "set_hvac_mode", {"entity_id": climate_id, "hvac_mode": "cool"}
+        )
+    except urllib.error.HTTPError:
+        pass
+    else:
+        raise SystemExit("Cooling was accepted although the strategy has no cooling")
+    if read_sim(COOLING_FLOW_SETPOINT_HC1) != 0:
+        raise SystemExit("Cooling was written although the strategy has no cooling")
+    print("OK: cooling is refused once the strategy no longer includes it")
+
+
 def check_removal(token: str, entry_id: str) -> None:
     configure_circuit(
         token,
@@ -483,6 +573,7 @@ def main() -> None:
     check_sending(token, entry_id)
     check_reading_room_sensor(token, entry_id)
     check_sensor_detection(token, entry_id)
+    check_cooling(token, entry_id)
     check_removal(token, entry_id)
 
 

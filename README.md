@@ -185,6 +185,29 @@ control strategy only changes if you untick the checkbox. Removing the integrati
 resets the register too, and restores the control strategy if the integration
 changed it.
 
+### Cooling
+
+A heating circuit can cool if its control strategy, set by the installer,
+is "Weather-compensated heating + constant cooling" or "Weather-compensated
+heating with room influence + constant cooling". The integration reads this
+when it is set up; if cooling is added later, open the entry's three-dot menu
+→ **Configure** → the heating circuit and save once.
+
+The circuit then offers **Cool** as an additional mode, and a number entity
+**Cooling flow setpoint heating circuit …** sets the flow temperature it
+cools with (15–25 °C in steps of 1 °C, default 18 °C; the lower bound is raised
+to the circuit's minimum cooling flow temperature set by the installer).
+
+- Switching to **Cool** writes that flow temperature to the controller, after
+  checking that the control strategy still includes cooling. Before that, the
+  circuit's constant heating flow setpoint is set to 0 and its operating mode
+  to Constant, which cooling requires; heating stays weather-compensated and
+  doesn't use that setpoint, so it is left at 0. While cooling, no target
+  temperature is shown.
+- Changing the number entity while cooling sends the new value right away.
+- Switching to **Off**, **Heat** or **Auto** turns cooling off (flow setpoint 0)
+  and then sets that mode as usual.
+
 ## Using domestic hot water (water_heater entity)
 
 Same 5 modes as the heating circuits (Off / Constant / Week 1 / Week 2 /
@@ -268,8 +291,8 @@ anyone else on your network.
 
 ## Known limitations
 
-- **Cooling** is only exposed through two sensors (current cooling power
-  and cooling energy), which are disabled by default — enable them under
+- **Cooling** (see [Cooling](#cooling)) has two sensors (current cooling
+  power and cooling energy), which are disabled by default — enable them under
   **Settings → Devices & Services → this integration → Entities** if your
   installation supports cooling. The author doesn't have a
   cooling-capable installation to test against — contributions welcome if

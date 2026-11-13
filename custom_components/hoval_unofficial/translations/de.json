@@ -185,6 +185,9 @@
       },
       "smart_grid_offset_buffer_cooling": {
         "name": "Smart Grid Offset Puffer Kühlen"
+      },
+      "cooling_flow_setpoint": {
+        "name": "Vorlauf Soll Kühlen Heizkreis {circuit}"
       }
     },
     "sensor": {
