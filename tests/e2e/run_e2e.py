@@ -32,7 +32,7 @@ EXPECTED_ENABLED = [
     ("water_heater.", None),
     ("climate.", "heating_circuit_1"),
 ]
-EXPECTED_DISABLED_SUBSTRINGS = ["smart_grid", "cooling"]
+EXPECTED_DISABLED_SUBSTRINGS = ["smart_grid", "cooling", "control_strategy"]
 
 
 def request(method, path, body=None, form=None, token=None):

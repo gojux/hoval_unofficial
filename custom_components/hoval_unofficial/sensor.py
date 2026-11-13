@@ -3,13 +3,19 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONTROL_STRATEGY_MAP,
+    CONTROL_STRATEGY_OPTIONS,
+    CONTROL_STRATEGY_UNKNOWN,
     DOMAIN,
+    HEATING_CIRCUITS,
+    HeatingCircuit,
     SENSOR_REGISTERS,
     RegisterDef,
     HEAT_PUMP_STATUS_MAP,
@@ -36,6 +42,11 @@ async def async_setup_entry(
     ]
     entities.append(HovalStatusSensor(coordinator, entry))
     entities.append(HovalSmartGridStatusSensor(coordinator, entry))
+    entities.extend(
+        HovalControlStrategySensor(coordinator, entry, hc)
+        for hc in HEATING_CIRCUITS
+        if hc.control_strategy_reg is not None
+    )
     async_add_entities(entities)
 
 
@@ -157,3 +168,48 @@ class HovalSmartGridStatusSensor(
         if raw_value is None:
             return None
         return SMART_GRID_STATUS_MAP.get(int(raw_value), SMART_GRID_STATUS_UNKNOWN)
+
+
+class HovalControlStrategySensor(
+    CoordinatorEntity[HovalModbusCoordinator], SensorEntity
+):
+    """A heating circuit's control strategy, as a translated diagnostic enum.
+
+    Disabled by default. Raw values outside CONTROL_STRATEGY_MAP are
+    reported as CONTROL_STRATEGY_UNKNOWN.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "control_strategy"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = CONTROL_STRATEGY_OPTIONS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: HovalModbusCoordinator,
+        entry: ConfigEntry,
+        heating_circuit: HeatingCircuit,
+    ) -> None:
+        reg = heating_circuit.control_strategy_reg
+        super().__init__(coordinator, context=[reg.key])
+        self._reg = reg
+        self._attr_unique_id = f"{entry.entry_id}_{reg.key}"
+        # "heating_circuit_1" -> "1", used in the translated entity name.
+        self._attr_translation_placeholders = {
+            "circuit": heating_circuit.key.removeprefix("heating_circuit_")
+        }
+        self._attr_entity_registry_enabled_default = reg.enabled_default
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Hoval (Modbus)",
+            model="Heat Pump Controller",
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        raw_value = self.coordinator.data.get(self._reg.key)
+        if raw_value is None:
+            return None
+        return CONTROL_STRATEGY_MAP.get(int(raw_value), CONTROL_STRATEGY_UNKNOWN)
