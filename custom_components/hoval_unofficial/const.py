@@ -569,6 +569,15 @@ CONTROL_STRATEGY_HC3_REGISTER = RegisterDef(
 
 CONTROL_STRATEGY_UNKNOWN = "unknown"
 
+CONTROL_STRATEGY_WEATHER_COMPENSATED = 0
+CONTROL_STRATEGY_ROOM_INFLUENCE = 1
+# The only strategies the integration may write, and the only ones under
+# which it sends a room temperature to the controller.
+CONTROL_STRATEGY_WRITABLE: tuple[int, ...] = (
+    CONTROL_STRATEGY_WEATHER_COMPENSATED,
+    CONTROL_STRATEGY_ROOM_INFLUENCE,
+)
+
 # Raw register value -> enum sensor state. Unlisted values fall back to
 # CONTROL_STRATEGY_UNKNOWN, since HA rejects enum states outside the options.
 CONTROL_STRATEGY_MAP: dict[int, str] = {
@@ -606,7 +615,7 @@ class HeatingCircuit:
     smart_grid_offset_reg: RegisterDef | None = None
     # This circuit's control strategy register (see
     # CONTROL_STRATEGY_HC1_REGISTER above), read by the diagnostic
-    # control strategy sensor in sensor.py.
+    # control strategy sensor in sensor.py and by room_temp.py.
     control_strategy_reg: RegisterDef | None = None
 
 
@@ -766,16 +775,14 @@ HEATING_CIRCUIT_REGISTERS = [
 #               circuit has a physical sensor wired up
 #   - "entity": mirror an existing Home Assistant entity's state (e.g. a
 #               separate smart thermostat's temperature sensor)
+#   - "entity_write": same as "entity", and also send the value to the
+#               controller's room register (see room_temp.py)
 # --------------------------------------------------------------------------
 
 CURRENT_TEMP_SOURCE_NONE = "none"
 CURRENT_TEMP_SOURCE_MODBUS = "modbus"
 CURRENT_TEMP_SOURCE_ENTITY = "entity"
-CURRENT_TEMP_SOURCE_OPTIONS: list[str] = [
-    CURRENT_TEMP_SOURCE_NONE,
-    CURRENT_TEMP_SOURCE_MODBUS,
-    CURRENT_TEMP_SOURCE_ENTITY,
-]
+CURRENT_TEMP_SOURCE_ENTITY_WRITE = "entity_write"
 DEFAULT_CURRENT_TEMP_SOURCE = CURRENT_TEMP_SOURCE_NONE
 
 
@@ -787,6 +794,12 @@ def current_temp_source_key(hc: HeatingCircuit) -> str:
 def current_temp_entity_key(hc: HeatingCircuit) -> str:
     """Options-flow storage key for the chosen HA source entity_id."""
     return f"{hc.key}_current_temp_entity_id"
+
+
+def previous_strategy_key(hc: HeatingCircuit) -> str:
+    """Options-flow storage key for the control strategy to restore, set only
+    while the integration itself has changed the circuit's strategy."""
+    return f"{hc.key}_previous_control_strategy"
 
 
 # --------------------------------------------------------------------------

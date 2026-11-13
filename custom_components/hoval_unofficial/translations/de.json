@@ -35,36 +35,51 @@
   "options": {
     "step": {
       "init": {
-        "sections": {
-          "general": {
-            "name": "Allgemein",
-            "data": {
-              "scan_interval": "Abfrageintervall (Sekunden)"
-            }
-          },
-          "heating_circuit_1": {
-            "name": "Heizkreis 1",
-            "data": {
-              "heating_circuit_1_current_temp_source": "Heizkreis 1: Quelle Raumtemperatur",
-              "heating_circuit_1_current_temp_entity_id": "Raumtemperatur-Entity (wenn \"Home-Assistant-Entity verwenden\" ausgewählt)"
-            }
-          },
-          "heating_circuit_2": {
-            "name": "Heizkreis 2",
-            "data": {
-              "heating_circuit_2_current_temp_source": "Heizkreis 2: Quelle Raumtemperatur",
-              "heating_circuit_2_current_temp_entity_id": "Raumtemperatur-Entity (wenn \"Home-Assistant-Entity verwenden\" ausgewählt)"
-            }
-          },
-          "heating_circuit_3": {
-            "name": "Heizkreis 3",
-            "data": {
-              "heating_circuit_3_current_temp_source": "Heizkreis 3: Quelle Raumtemperatur",
-              "heating_circuit_3_current_temp_entity_id": "Raumtemperatur-Entity (wenn \"Home-Assistant-Entity verwenden\" ausgewählt)"
-            }
-          }
+        "title": "Optionen",
+        "menu_options": {
+          "general": "Allgemein",
+          "heating_circuit_1": "Heizkreis 1",
+          "heating_circuit_2": "Heizkreis 2",
+          "heating_circuit_3": "Heizkreis 3"
+        }
+      },
+      "general": {
+        "title": "Allgemein",
+        "data": {
+          "scan_interval": "Abfrageintervall (Sekunden)"
+        }
+      },
+      "circuit": {
+        "title": "Heizkreis {circuit}",
+        "description": "Aktuelle Regelstrategie: {strategy}\nRaumtemperatur in der Steuerung: {room_temperature} °C (0 bedeutet: kein Wert)\n\nEine Home Assistant Entität kann nur an die Steuerung übertragen werden, wenn dort kein eigener Raumfühler angeschlossen ist und die Regelstrategie \"Reine Witterungsführung\" oder \"Witterungsführung mit Raumaufschaltung\" ist.",
+        "data": {
+          "current_temp_source": "Quelle Raumtemperatur",
+          "current_temp_entity_id": "Raumtemperatur-Entität",
+          "room_influence": "Raumfühler in Regelstrategie aufnehmen"
+        },
+        "data_description": {
+          "current_temp_entity_id": "Nur nötig für die Quellen, die eine Home Assistant Entität verwenden.",
+          "room_influence": "Ein: \"Witterungsführung mit Raumaufschaltung\", die Steuerung berücksichtigt die Raumtemperatur. Aus: \"Reine Witterungsführung\". Damit die Vorlauftemperatur korrigiert wird, muss zusätzlich der Parameter \"Raumtemperatur-Kompensation\" (03-007) am Bedienmodul über 0 stehen (Servicezugang)."
+        }
+      },
+      "confirm_room_influence": {
+        "title": "Heizkreis {circuit}: keine Raumtemperatur",
+        "description": "An der Steuerung wurde kein Raumfühler erkannt, und es wird kein Wert an sie übertragen. Die Regelstrategie funktioniert nur wie vorgesehen, wenn ein Raumfühler an der Steuerung angeschlossen ist, z. B. ein nachgerüsteter.",
+        "menu_options": {
+          "confirm_room_influence_yes": "Ein Raumfühler ist angeschlossen: in die Regelstrategie aufnehmen",
+          "confirm_room_influence_no": "Zurück"
         }
       }
+    },
+    "error": {
+      "entity_required": "Wähle die Entität aus, die an die Steuerung übertragen werden soll.",
+      "entity_unavailable": "Diese Entität hat zurzeit keine verwendbare Temperatur (-20 bis 50 °C).",
+      "strategy_not_writable": "Der aktuelle Zustand der Steuerung erlaubt das Übertragen eines Werts nicht.",
+      "write_failed": "Das Schreiben auf die Steuerung ist fehlgeschlagen. Details stehen im Log."
+    },
+    "abort": {
+      "not_loaded": "Die Integration läuft nicht. Prüfe die Verbindung zur Steuerung.",
+      "cannot_read": "Die Werte des Heizkreises konnten nicht von der Steuerung gelesen werden."
     }
   },
   "entity": {
@@ -298,9 +313,16 @@
     "current_temp_source": {
       "options": {
         "none": "Keine Ist-Temperatur anzeigen",
-        "modbus": "Von der Wärmepumpe lesen (Modbus-Raumfühler)",
-        "entity": "Home-Assistant-Entity verwenden"
+        "modbus": "Raumfühler der Steuerung auslesen",
+        "entity": "Home Assistant Entität, nur Anzeige bei Widget",
+        "entity_write": "Home Assistant Entität, an Steuerung übertragen"
       }
+    }
+  },
+  "issues": {
+    "room_temp_source_unavailable": {
+      "title": "Raumtemperatur von Heizkreis {circuit} wird nicht aktualisiert",
+      "description": "{entity_id} liefert seit 30 Minuten keine verwendbare Temperatur, deshalb wird nichts an die Steuerung übertragen. Die Steuerung arbeitet mit dem zuletzt empfangenen Wert weiter. Repariere die Entität oder wähle in den Optionen der Integration eine andere Quelle."
     }
   }
 }

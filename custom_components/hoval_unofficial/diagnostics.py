@@ -40,4 +40,8 @@ async def async_get_config_entry_diagnostics(
         "device_id": entry.data.get(CONF_DEVICE_ID),
         "last_update_success": coordinator.last_update_success,
         "register_values": dict(coordinator.data or {}),
+        "room_temp_writers": {
+            key: writer.as_diagnostics()
+            for key, writer in coordinator.room_temp_writers.items()
+        },
     }

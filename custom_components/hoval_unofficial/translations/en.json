@@ -35,44 +35,60 @@
   "options": {
     "step": {
       "init": {
-        "sections": {
-          "general": {
-            "name": "General",
-            "data": {
-              "scan_interval": "Polling interval (seconds)"
-            }
-          },
-          "heating_circuit_1": {
-            "name": "Heating circuit 1",
-            "data": {
-              "heating_circuit_1_current_temp_source": "Heating circuit 1: room temperature source",
-              "heating_circuit_1_current_temp_entity_id": "Room temperature entity (when \"Use a Home Assistant entity\" is selected)"
-            }
-          },
-          "heating_circuit_2": {
-            "name": "Heating circuit 2",
-            "data": {
-              "heating_circuit_2_current_temp_source": "Heating circuit 2: room temperature source",
-              "heating_circuit_2_current_temp_entity_id": "Room temperature entity (when \"Use a Home Assistant entity\" is selected)"
-            }
-          },
-          "heating_circuit_3": {
-            "name": "Heating circuit 3",
-            "data": {
-              "heating_circuit_3_current_temp_source": "Heating circuit 3: room temperature source",
-              "heating_circuit_3_current_temp_entity_id": "Room temperature entity (when \"Use a Home Assistant entity\" is selected)"
-            }
-          }
+        "title": "Options",
+        "menu_options": {
+          "general": "General",
+          "heating_circuit_1": "Heating circuit 1",
+          "heating_circuit_2": "Heating circuit 2",
+          "heating_circuit_3": "Heating circuit 3"
+        }
+      },
+      "general": {
+        "title": "General",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        }
+      },
+      "circuit": {
+        "title": "Heating circuit {circuit}",
+        "description": "Current control strategy: {strategy}\nRoom temperature on the controller: {room_temperature} °C (0 means no value)\n\nA Home Assistant entity can only be sent to the controller if no room sensor of its own is connected to it and its control strategy is \"Weather-compensated\" or \"Weather-compensated with room influence\".",
+        "data": {
+          "current_temp_source": "Room temperature source",
+          "current_temp_entity_id": "Room temperature entity",
+          "room_influence": "Include room sensor in control strategy"
+        },
+        "data_description": {
+          "current_temp_entity_id": "Only needed for the sources that use a Home Assistant entity.",
+          "room_influence": "On: \"Weather-compensated with room influence\", the controller takes the room temperature into account. Off: \"Weather-compensated\". To correct the flow temperature, the controller's parameter \"Room temperature compensation\" (03-007) must also be set above 0 on the operating module (service access)."
+        }
+      },
+      "confirm_room_influence": {
+        "title": "Heating circuit {circuit}: no room temperature",
+        "description": "No room sensor was detected on the controller and no value is being sent to it. The control strategy only works as intended if a room sensor is connected to the controller, e.g. one that was retrofitted.",
+        "menu_options": {
+          "confirm_room_influence_yes": "A room sensor is connected: include it in the control strategy",
+          "confirm_room_influence_no": "Go back"
         }
       }
+    },
+    "error": {
+      "entity_required": "Select the entity to send to the controller.",
+      "entity_unavailable": "This entity currently has no usable temperature (-20 to 50 °C).",
+      "strategy_not_writable": "The current state of the controller does not allow sending a value.",
+      "write_failed": "Writing to the controller failed. Check the log for details."
+    },
+    "abort": {
+      "not_loaded": "The integration is not running. Check the connection to the controller.",
+      "cannot_read": "Could not read the heating circuit's values from the controller."
     }
   },
   "selector": {
     "current_temp_source": {
       "options": {
         "none": "Don't show a current temperature",
-        "modbus": "Read from Heat Pump (Modbus room sensor)",
-        "entity": "Use a Home Assistant entity"
+        "modbus": "Read the controller's room sensor",
+        "entity": "Home Assistant entity, display in widget only",
+        "entity_write": "Home Assistant entity, send to the controller"
       }
     }
   },
@@ -301,6 +317,12 @@
       "operating_hours_heat_generator": {
         "name": "Operating hours heat generator"
       }
+    }
+  },
+  "issues": {
+    "room_temp_source_unavailable": {
+      "title": "Room temperature for heating circuit {circuit} is not being updated",
+      "description": "{entity_id} has had no usable temperature for 30 minutes, so nothing is being sent to the controller. The controller keeps working with the last value it received. Fix the entity, or choose another source under the integration's options."
     }
   }
 }
