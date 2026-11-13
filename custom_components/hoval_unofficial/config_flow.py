@@ -40,6 +40,7 @@ from .const import (
     current_temp_source_key,
     previous_strategy_key,
 )
+from . import async_read_cooling_options
 from .coordinator import HovalModbusCoordinator
 from .room_temp import has_room_sensor, parse_room_temperature
 
@@ -340,17 +341,19 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
 
             if not errors:
                 try:
-                    return self.async_create_entry(
-                        title="",
-                        data=await self._async_apply_circuit(
-                            coordinator,
-                            strategy,
-                            temperature,
-                            source,
-                            entity_id,
-                            room_influence,
-                        ),
+                    options = await self._async_apply_circuit(
+                        coordinator,
+                        strategy,
+                        temperature,
+                        source,
+                        entity_id,
+                        room_influence,
                     )
+                    # Saving the circuit is how cooling added later is found.
+                    options.update(
+                        await async_read_cooling_options(coordinator, [hc])
+                    )
+                    return self.async_create_entry(title="", data=options)
                 except UpdateFailed as err:
                     _LOGGER.warning("%s: writing failed: %s", hc.key, err)
                     errors["base"] = "write_failed"

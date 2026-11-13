@@ -1,8 +1,9 @@
 """Constants for the Hoval Heat Pump Integration (unofficial)."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from homeassistant.components.water_heater import STATE_ECO
 from homeassistant.components.climate import HVACMode, PRESET_ECO
@@ -577,6 +578,16 @@ CONTROL_STRATEGY_WRITABLE: tuple[int, ...] = (
     CONTROL_STRATEGY_WEATHER_COMPENSATED,
     CONTROL_STRATEGY_ROOM_INFLUENCE,
 )
+# Strategies with constant flow cooling; only these offer cooling.
+CONTROL_STRATEGIES_COOLING: tuple[int, ...] = (4, 5)
+
+# Range of the cooling flow setpoint offered to the user, in °C. The lower
+# bound is raised to the circuit's minimum cooling flow temperature, which the
+# installer sets to prevent condensation. Above the upper bound, the flow is
+# about as warm as the room and doesn't cool any more.
+COOLING_FLOW_MIN = 15.0
+COOLING_FLOW_MAX = 25.0
+COOLING_FLOW_DEFAULT = 18.0
 
 # Raw register value -> enum sensor state. Unlisted values fall back to
 # CONTROL_STRATEGY_UNKNOWN, since HA rejects enum states outside the options.
@@ -617,6 +628,17 @@ class HeatingCircuit:
     # CONTROL_STRATEGY_HC1_REGISTER above), read by the diagnostic
     # control strategy sensor in sensor.py and by room_temp.py.
     control_strategy_reg: RegisterDef | None = None
+    # Constant flow setpoint for cooling; 0 means not cooling. Writing a
+    # temperature turns cooling on (see climate.py). None means cooling isn't
+    # supported for this circuit.
+    cooling_flow_setpoint_reg: RegisterDef | None = None
+    # Minimum cooling flow temperature, set by the installer.
+    cooling_flow_min_reg: RegisterDef | None = None
+    # Constant flow setpoint for heating. With a cooling strategy (4/5) it
+    # must be 0 for the circuit to cool; heating then stays weather
+    # compensated and doesn't use it, so it is set to 0 when cooling starts
+    # and left there.
+    heating_constant_flow_reg: RegisterDef | None = None
 
 
 HEATING_CIRCUIT_1 = HeatingCircuit(
@@ -659,6 +681,24 @@ HEATING_CIRCUIT_1 = HeatingCircuit(
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC1_REGISTER,
     control_strategy_reg=CONTROL_STRATEGY_HC1_REGISTER,
+    cooling_flow_setpoint_reg=RegisterDef(
+        key="cooling_flow_setpoint_hc1",
+        name="Cooling flow setpoint HC1",
+        address=19482,
+        scale=0.1,
+    ),
+    cooling_flow_min_reg=RegisterDef(
+        key="cooling_flow_min_hc1",
+        name="Minimum cooling flow temperature HC1",
+        address=29435,
+        scale=0.1,
+    ),
+    heating_constant_flow_reg=RegisterDef(
+        key="heating_constant_flow_hc1",
+        name="Constant heating flow setpoint HC1",
+        address=1490,
+        scale=0.1,
+    ),
     enabled_default=True,
 )
 HEATING_CIRCUIT_2 = HeatingCircuit(
@@ -761,6 +801,10 @@ HEATING_CIRCUIT_REGISTERS = [
     hc.room_actual_temp_reg for hc in HEATING_CIRCUITS if hc.room_actual_temp_reg is not None
 ] + [
     hc.control_strategy_reg for hc in HEATING_CIRCUITS if hc.control_strategy_reg is not None
+] + [
+    hc.cooling_flow_setpoint_reg
+    for hc in HEATING_CIRCUITS
+    if hc.cooling_flow_setpoint_reg is not None
 ]
 
 # --------------------------------------------------------------------------
@@ -794,6 +838,25 @@ def current_temp_source_key(hc: HeatingCircuit) -> str:
 def current_temp_entity_key(hc: HeatingCircuit) -> str:
     """Options-flow storage key for the chosen HA source entity_id."""
     return f"{hc.key}_current_temp_entity_id"
+
+
+def cooling_supported_key(hc: HeatingCircuit) -> str:
+    """Options storage key for whether the circuit can cool, read from its
+    control strategy when the integration is set up or the circuit is saved
+    in the options."""
+    return f"{hc.key}_cooling_supported"
+
+
+def cooling_flow_min_key(hc: HeatingCircuit) -> str:
+    """Options storage key for the circuit's minimum cooling flow
+    temperature, read together with cooling_supported_key."""
+    return f"{hc.key}_cooling_flow_min"
+
+
+def cooling_flow_range(hc: HeatingCircuit, options: Mapping[str, Any]) -> tuple[float, float]:
+    """The cooling flow setpoint range offered for a circuit."""
+    minimum = max(COOLING_FLOW_MIN, options.get(cooling_flow_min_key(hc)) or 0)
+    return minimum, max(COOLING_FLOW_MAX, minimum)
 
 
 def previous_strategy_key(hc: HeatingCircuit) -> str:

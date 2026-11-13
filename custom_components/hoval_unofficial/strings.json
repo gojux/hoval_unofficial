@@ -195,6 +195,9 @@
       },
       "smart_grid_offset_buffer_cooling": {
         "name": "Smart Grid offset buffer (cooling)"
+      },
+      "cooling_flow_setpoint": {
+        "name": "Cooling flow setpoint heating circuit {circuit}"
       }
     },
     "sensor": {

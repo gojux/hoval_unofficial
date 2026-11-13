@@ -34,6 +34,8 @@ from .const import (
     CLIMATE_MODE_TO_PRESET,
     CLIMATE_PRESET_OPTIONS,
     CLIMATE_PRESET_WEEK1,
+    CONTROL_STRATEGIES_COOLING,
+    COOLING_FLOW_DEFAULT,
     CURRENT_TEMP_SOURCE_ENTITY,
     CURRENT_TEMP_SOURCE_ENTITY_WRITE,
     CURRENT_TEMP_SOURCE_MODBUS,
@@ -45,6 +47,8 @@ from .const import (
     SMART_GRID_MODE_MAP,
     SMART_GRID_MODE_PREFERRED_OPERATION,
     SMART_GRID_MODE_REGISTER,
+    cooling_flow_range,
+    cooling_supported_key,
     current_temp_entity_key,
     current_temp_source_key,
 )
@@ -175,6 +179,15 @@ class HovalRoomClimate(
         if heating_circuit.smart_grid_offset_reg is not None:
             context.append(SMART_GRID_MODE_REGISTER.key)
             context.append(heating_circuit.smart_grid_offset_reg.key)
+        # Polled even without stored cooling support, so cooling turned on at
+        # the controller itself still shows.
+        if heating_circuit.cooling_flow_setpoint_reg is not None:
+            context.append(heating_circuit.cooling_flow_setpoint_reg.key)
+        self._cooling_supported = bool(
+            heating_circuit.cooling_flow_setpoint_reg is not None
+            and entry.options.get(cooling_supported_key(heating_circuit))
+        )
+        self._cooling_flow_range = cooling_flow_range(heating_circuit, entry.options)
 
         super().__init__(coordinator, context=context)
         self._entry = entry
@@ -226,6 +239,12 @@ class HovalRoomClimate(
         # target_temperature can reflect it immediately.
         self._pending_temperature: float | None = None
         self._pending_temperature_since: datetime | None = None
+
+        # Same mechanism for cooling, which is a value in its own register
+        # rather than a mode: True/False while turning it on/off is
+        # awaiting confirmation.
+        self._pending_cooling: bool | None = None
+        self._pending_cooling_since: datetime | None = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -326,9 +345,53 @@ class HovalRoomClimate(
             self._pending_temperature = None
             self._pending_temperature_since = None
 
+        if self._pending_cooling is not None and (
+            self._raw_cooling_active() == self._pending_cooling
+        ):
+            self._pending_cooling = None
+            self._pending_cooling_since = None
+
         self._expire_stale_pending_mode()
         self._expire_stale_pending_temperature()
+        self._expire_stale_pending_cooling()
         super()._handle_coordinator_update()
+
+    def _raw_cooling_active(self) -> bool:
+        reg = self._hc.cooling_flow_setpoint_reg
+        return reg is not None and bool(self.coordinator.data.get(reg.key))
+
+    def _expire_stale_pending_cooling(self) -> None:
+        if (
+            self._pending_cooling is not None
+            and self._pending_cooling_since is not None
+            and dt_util.utcnow() - self._pending_cooling_since
+            > MODE_CHANGE_CONFIRMATION_TIMEOUT
+        ):
+            _LOGGER.warning(
+                "%s: turning cooling %s was not confirmed by the controller "
+                "within %s, showing its actual reported state instead",
+                self._hc.key,
+                "on" if self._pending_cooling else "off",
+                MODE_CHANGE_CONFIRMATION_TIMEOUT,
+            )
+            self._pending_cooling = None
+            self._pending_cooling_since = None
+
+    def _cooling_active(self) -> bool:
+        """Whether the circuit cools -- optimistic while a change is pending."""
+        self._expire_stale_pending_cooling()
+        if self._pending_cooling is not None:
+            return self._pending_cooling
+        return self._raw_cooling_active()
+
+    async def _async_write_cooling(self, value: float) -> None:
+        """Write the cooling flow setpoint (0 turns cooling off)."""
+        self._pending_cooling = value > 0
+        self._pending_cooling_since = dt_util.utcnow()
+        self.async_write_ha_state()
+        await self.coordinator.async_write_value(
+            self._hc.cooling_flow_setpoint_reg, value
+        )
 
     def _expire_stale_pending_mode(self) -> None:
         """Give up on an unconfirmed optimistic mode change after
@@ -507,10 +570,33 @@ class HovalRoomClimate(
         return self._hc.write_normal_setpoint_reg.step or 0.5
 
     @property
+    def hvac_modes(self) -> list[HVACMode]:
+        """Cooling is offered for circuits whose control strategy included
+        cooling when they were last saved, and always shown while active."""
+        if self._cooling_supported or self._cooling_active():
+            return [*self._attr_hvac_modes, HVACMode.COOL]
+        return self._attr_hvac_modes
+
+    @property
+    def supported_features(self) -> ClimateEntityFeature:
+        """No target temperature while cooling: the circuit then cools with a
+        constant flow temperature (a separate number entity), not towards a
+        room temperature."""
+        if self.hvac_mode == HVACMode.COOL:
+            return self._attr_supported_features & ~(
+                ClimateEntityFeature.TARGET_TEMPERATURE
+                | ClimateEntityFeature.PRESET_MODE
+            )
+        return self._attr_supported_features
+
+    @property
     def hvac_mode(self) -> HVACMode | None:
         """Current operating mode -- the optimistic pending value right
         after a change, until the controller confirms it (or the change
-        times out unconfirmed), then the real, translated register value."""
+        times out unconfirmed), then the real, translated register value.
+        Cooling takes precedence, since it doesn't change the mode register."""
+        if self._cooling_active():
+            return HVACMode.COOL
         raw_mode = self._effective_raw_mode()
         if raw_mode is None:
             return None
@@ -566,7 +652,8 @@ class HovalRoomClimate(
         to show a "syncing..." indicator."""
         return {
             ATTR_LAST_AUTO_PROGRAM: self._last_preset,
-            ATTR_MODE_CHANGE_PENDING: self._pending_mode_value is not None,
+            ATTR_MODE_CHANGE_PENDING: self._pending_mode_value is not None
+            or self._pending_cooling is not None,
             ATTR_TEMPERATURE_CHANGE_PENDING: self._pending_temperature is not None,
         }
 
@@ -629,6 +716,12 @@ class HovalRoomClimate(
         the real desired program if/when the user then picked a different
         preset explicitly.
         """
+        if hvac_mode == HVACMode.COOL:
+            await self._async_start_cooling()
+            return
+        if self._cooling_active():
+            await self._async_write_cooling(0)
+
         if hvac_mode == HVACMode.AUTO:
             raw_mode = PRESET_TO_CLIMATE_MODE.get(
                 self._last_preset, HVAC_TO_CLIMATE_MODE[HVACMode.AUTO]
@@ -638,6 +731,36 @@ class HovalRoomClimate(
         if raw_mode is None:
             raise ValueError(f"Unsupported HVAC mode: {hvac_mode}")
         await self._async_write_mode(raw_mode)
+
+    async def _async_start_cooling(self) -> None:
+        """Turn cooling on with the flow temperature chosen in the number
+        entity, after checking the control strategy still includes cooling.
+        The constant heating flow setpoint is set to 0 first, which cooling
+        requires. Leaves the mode register unchanged."""
+        if not self._cooling_supported:
+            raise ServiceValidationError(
+                f"{self._hc.key} can't cool: its control strategy didn't include "
+                "cooling when it was last saved in the integration's options."
+            )
+        strategy = int(
+            await self.coordinator.async_read_value(self._hc.control_strategy_reg)
+        )
+        if strategy not in CONTROL_STRATEGIES_COOLING:
+            raise ServiceValidationError(
+                f"{self._hc.key} no longer has a control strategy with cooling "
+                f"({strategy}); save the heating circuit in the integration's "
+                "options again."
+            )
+        heating_reg = self._hc.heating_constant_flow_reg
+        if heating_reg is not None and (
+            await self.coordinator.async_read_value(heating_reg)
+        ):
+            await self.coordinator.async_write_value(heating_reg, 0, refresh=False)
+        minimum, maximum = self._cooling_flow_range
+        value = self.coordinator.cooling_flow_setpoints.get(
+            self._hc.key, COOLING_FLOW_DEFAULT
+        )
+        await self._async_write_cooling(min(max(value, minimum), maximum))
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Select a specific AUTO program (week1 / week2 / eco).
