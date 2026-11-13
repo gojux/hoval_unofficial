@@ -69,13 +69,21 @@
           "confirm_room_influence_yes": "Ein Raumfühler ist angeschlossen: in die Regelstrategie aufnehmen",
           "confirm_room_influence_no": "Zurück"
         }
+      },
+      "confirm_risks": {
+        "title": "Heizkreis {circuit}: Bitte vor dem Einschalten lesen",
+        "description": "Die Raumtemperatur greift dann direkt in die Regelung dieses Heizkreises ein:\n\n- Eine Raumtemperatur unter dem Sollwert erhöht die Vorlauftemperatur. Schon wenige Kelvin können reichen, um die maximale Vorlauftemperatur zu erreichen.\n- Eine Raumtemperatur über dem Sollwert kann den Heizkreis abschalten.\n- Liefert die Entität 5 Minuten lang keinen verwendbaren Wert (nicht verfügbar, außerhalb 5–40 °C oder seit 2 Stunden keine Meldung), wird stattdessen der Raum-Sollwert übertragen. Die Raumtemperatur wirkt dann nicht, bis die Entität wieder einen verwendbaren Wert liefert.\n- Fällt Home Assistant selbst aus, arbeitet die Steuerung mit dem zuletzt empfangenen Wert weiter.\n- Wie stark die Steuerung reagiert, hängt vom Parameter \"Raumtemperatur-Kompensation\" (03-007) am Bedienmodul ab. Bei Fußbodenheizungen empfiehlt Hoval höchstens 4.\n\nSchließe diesen Dialog, um nichts zu ändern.",
+        "data": {
+          "accept_risks": "Ich habe die Hinweise gelesen und möchte fortfahren"
+        }
       }
     },
     "error": {
       "entity_required": "Wähle die Entität aus, die an die Steuerung übertragen werden soll.",
-      "entity_unavailable": "Diese Entität hat zurzeit keine verwendbare Temperatur (-20 bis 50 °C).",
+      "entity_unavailable": "Diese Entität hat zurzeit keine verwendbare Temperatur (5 bis 40 °C).",
       "strategy_not_writable": "Der aktuelle Zustand der Steuerung erlaubt das Übertragen eines Werts nicht.",
-      "write_failed": "Das Schreiben auf die Steuerung ist fehlgeschlagen. Details stehen im Log."
+      "write_failed": "Das Schreiben auf die Steuerung ist fehlgeschlagen. Details stehen im Log.",
+      "risks_not_accepted": "Bestätige die Hinweise, um fortzufahren."
     },
     "abort": {
       "not_loaded": "Die Integration läuft nicht. Prüfe die Verbindung zur Steuerung.",
@@ -322,7 +330,7 @@
   "issues": {
     "room_temp_source_unavailable": {
       "title": "Raumtemperatur von Heizkreis {circuit} wird nicht aktualisiert",
-      "description": "{entity_id} liefert seit 30 Minuten keine verwendbare Temperatur, deshalb wird nichts an die Steuerung übertragen. Die Steuerung arbeitet mit dem zuletzt empfangenen Wert weiter. Repariere die Entität oder wähle in den Optionen der Integration eine andere Quelle."
+      "description": "{entity_id} liefert seit 30 Minuten keine verwendbare Temperatur (nicht verfügbar, außerhalb 5–40 °C oder seit 2 Stunden keine Meldung). Stattdessen wird der Raum-Sollwert an die Steuerung übertragen, die Raumtemperatur wirkt sich also nicht auf die Vorlauftemperatur aus. Repariere die Entität oder wähle in den Optionen der Integration eine andere Quelle."
     }
   }
 }

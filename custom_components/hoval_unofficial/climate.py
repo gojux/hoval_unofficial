@@ -442,10 +442,14 @@ class HovalRoomClimate(
             value = self.coordinator.data.get(reg.key)
             # Without a sensor the register holds 0, which isn't a temperature.
             return value if value is not None and has_room_sensor(value) else None
-        if self._current_temp_source in (
-            CURRENT_TEMP_SOURCE_ENTITY,
-            CURRENT_TEMP_SOURCE_ENTITY_WRITE,
-        ):
+        if self._current_temp_source == CURRENT_TEMP_SOURCE_ENTITY_WRITE:
+            # While the room setpoint is sent instead, the entity's value
+            # isn't what the controller works with.
+            writer = self.coordinator.room_temp_writers.get(self._hc.key)
+            if writer is not None and writer.fallback_active:
+                return None
+            return self._external_current_temp
+        if self._current_temp_source == CURRENT_TEMP_SOURCE_ENTITY:
             return self._external_current_temp
         return None  # CURRENT_TEMP_SOURCE_NONE (or unknown/unset)
 

@@ -114,7 +114,11 @@ form, so it can be changed anytime without re-adding the integration):
   display as above, and `RoomTempWriter` (`room_temp.py`) writes the value to
   `room_actual_temp_reg`. It runs independently of the climate entities,
   since HC2/HC3 are disabled by default, and reads the control strategy
-  directly before each write, independent of what is being polled.
+  directly before each write, independent of what is being polled. If the
+  entity is unusable for 5 minutes or hasn't reported (`last_reported`) for
+  2 hours, it sends the room setpoint (`read_setpoint_reg`, kept polled
+  through its own coordinator listener) while the strategy includes room
+  influence, which neutralizes the room influence until the entity recovers.
 
 The form for a circuit is built from what is read when it opens: a value in
 the room register other than 0 counts as a sensor, except while sending, when

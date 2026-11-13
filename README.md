@@ -147,6 +147,12 @@ Independently of the source, the **Include room sensor in control strategy**
 checkbox switches between these two control strategies: on means
 "Weather-compensated with room influence", off means "Weather-compensated".
 The controller only takes the room temperature into account when it's on.
+Saving with sending and the checkbox both on first shows the risks below and
+asks you to confirm them, every time; without room influence, the controller
+ignores the value. If the checkbox is on while no room sensor is detected and no
+value is being sent, the form also asks for confirmation, since that's only
+right with a sensor it can't detect, e.g. one retrofitted while values were
+being sent.
 
 > **Important:** For the room temperature to correct the flow temperature,
 > the parameter **Room temperature compensation (03-007)** must also be set
@@ -156,20 +162,23 @@ The controller only takes the room temperature into account when it's on.
 > medium, 7–10 strong; for underfloor heating, Hoval recommends no more than 4.
 > With the default of 0, the controller still switches the heating circuit off
 > when the room is warmer than its setpoint, but doesn't correct the flow
-> temperature. If
-it's on while no room sensor is detected and no value is being sent, the form
-asks for confirmation, since that's only right with a sensor it can't detect,
-e.g. one retrofitted while values were being sent.
+> temperature.
 
 While sending, the value is written on every change (at most once per
 minute) and at least every 10 minutes. Nothing is sent while the control
-strategy is anything else, or while the entity has no usable temperature;
-if the latter lasts 30 minutes, a repair issue appears.
+strategy is anything other than these two.
 
-> **Note:** The controller keeps the last value it received. If Home
-> Assistant is down or the entity stays unavailable, it keeps controlling
-> the circuit with that value. A value that is too low raises the flow
-> temperature; a value above the setpoint can switch the heating circuit off.
+If the entity has no usable temperature for 5 minutes (unavailable, or
+outside 5–40 °C), or hasn't reported for 2 hours, the circuit's room setpoint
+is sent instead while room influence is on. With no deviation, the controller
+doesn't correct the flow temperature, as with "Weather-compensated". As soon
+as the entity is usable again, its temperature is sent again. After 30
+minutes, a repair issue appears.
+
+> **Note:** If Home Assistant itself is down, nothing is sent and the
+> controller keeps controlling the circuit with the last value it received.
+> A value that is too low raises the flow temperature; a value above the
+> setpoint can switch the heating circuit off.
 
 When you stop sending, the room temperature register is reset to 0; the
 control strategy only changes if you untick the checkbox. Removing the integration

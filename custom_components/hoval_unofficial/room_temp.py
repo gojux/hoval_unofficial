@@ -48,10 +48,17 @@ _LOGGER = logging.getLogger(__name__)
 
 WRITE_INTERVAL = timedelta(minutes=10)
 MIN_SECONDS_BETWEEN_WRITES = 60
+FALLBACK_DELAY_SECONDS = 5 * 60
 SOURCE_UNAVAILABLE_ISSUE_DELAY_SECONDS = 30 * 60
+# Many wireless sensors keep their last value instead of becoming unavailable.
+SOURCE_STALE_AFTER = timedelta(hours=2)
 
+# Range of the controller's room register that counts as a sensor reading.
 ROOM_TEMP_MIN = -20.0
 ROOM_TEMP_MAX = 50.0
+# Range of a Home Assistant temperature that is sent to the controller.
+SOURCE_TEMP_MIN = 5.0
+SOURCE_TEMP_MAX = 40.0
 
 # The gateway can refuse a connection opened right after another one was
 # closed, which is exactly the situation when an entry is removed.
@@ -77,7 +84,7 @@ def parse_room_temperature(state: State | None) -> float | None:
     if unit not in TemperatureConverter.VALID_UNITS:
         return None
     value = TemperatureConverter.convert(value, unit, UnitOfTemperature.CELSIUS)
-    return round(value, 1) if ROOM_TEMP_MIN <= value <= ROOM_TEMP_MAX else None
+    return round(value, 1) if SOURCE_TEMP_MIN <= value <= SOURCE_TEMP_MAX else None
 
 
 def _source_unavailable_issue_id(entry: ConfigEntry, hc: HeatingCircuit) -> str:
@@ -91,8 +98,13 @@ class RoomTempWriter:
     once per MIN_SECONDS_BETWEEN_WRITES (a change within that time is written
     when it has passed), and in any case every WRITE_INTERVAL. The control
     strategy is read before each write: nothing is sent unless it is one of
-    CONTROL_STRATEGY_WRITABLE. An unusable source entity is never written;
-    the last value stays in the register, since the controller keeps it.
+    CONTROL_STRATEGY_WRITABLE.
+
+    If the entity has no usable value for FALLBACK_DELAY_SECONDS, or hasn't
+    reported for SOURCE_STALE_AFTER, the circuit's room setpoint is sent
+    instead while the strategy includes room influence. A deviation of 0 means
+    no correction, so the controller then acts as if it were weather
+    compensated only. The controller itself keeps the last value it received.
     """
 
     def __init__(
@@ -111,11 +123,14 @@ class RoomTempWriter:
         self._lock = asyncio.Lock()
         self._unsubscribers: list[CALLBACK_TYPE] = []
         self._cancel_deferred_write: CALLBACK_TYPE | None = None
+        self._cancel_fallback_timer: CALLBACK_TYPE | None = None
         self._cancel_unavailable_timer: CALLBACK_TYPE | None = None
         self._stopped = True
         self._last_attempt = 0.0
+        self._last_target: float | None = None
         self._warned = False
         self._issue_raised = False
+        self.fallback_active = False
         self.last_written_value: float | None = None
         self.last_written_at: datetime | None = None
         self.blocked_strategy: int | None = None
@@ -129,6 +144,11 @@ class RoomTempWriter:
             ),
             async_track_time_interval(
                 self._hass, self._handle_interval, WRITE_INTERVAL
+            ),
+            # Keeps the room setpoint polled, which the fallback sends.
+            self._coordinator.async_add_listener(
+                self._handle_coordinator_update,
+                context=[self._hc.read_setpoint_reg.key],
             ),
         ]
         self._evaluate(force=True)
@@ -151,6 +171,13 @@ class RoomTempWriter:
         self._evaluate(force=True)
 
     @callback
+    def _handle_coordinator_update(self) -> None:
+        # A changed setpoint has to reach the controller right away, or it
+        # sees a deviation that the fallback is meant to prevent.
+        if self.fallback_active and self._setpoint() != self._last_target:
+            self._evaluate(force=True)
+
+    @callback
     def _handle_deferred(self, now: datetime) -> None:
         self._cancel_deferred_write = None
         self._evaluate(force=False)
@@ -161,13 +188,32 @@ class RoomTempWriter:
             self._cancel_deferred_write()
             self._cancel_deferred_write = None
 
+    def _setpoint(self) -> float | None:
+        value = self._coordinator.data.get(self._hc.read_setpoint_reg.key)
+        if value is None or not SOURCE_TEMP_MIN <= value <= SOURCE_TEMP_MAX:
+            return None
+        return round(value, 1)
+
+    def _source_value(self) -> float | None:
+        state = self._hass.states.get(self._entity_id)
+        if state is None or dt_util.utcnow() - state.last_reported > SOURCE_STALE_AFTER:
+            return None
+        return parse_room_temperature(state)
+
     @callback
     def _evaluate(self, force: bool) -> None:
-        value = parse_room_temperature(self._hass.states.get(self._entity_id))
+        value = self._source_value()
         if value is None:
             self._source_unusable()
-            return
-        self._source_usable()
+            if not self.fallback_active:
+                return
+            value = self._setpoint()
+            if value is None:
+                return
+        else:
+            if self.fallback_active:
+                force = True
+            self._source_usable()
 
         if not force:
             if value == self.last_written_value:
@@ -185,13 +231,14 @@ class RoomTempWriter:
 
         self._cancel_deferred()
         self._last_attempt = time.monotonic()
+        self._last_target = value
         self._entry.async_create_background_task(
             self._hass,
-            self._async_write(value),
+            self._async_write(value, self.fallback_active),
             f"{DOMAIN} room temperature {self._hc.key}",
         )
 
-    async def _async_write(self, value: float) -> None:
+    async def _async_write(self, value: float, fallback: bool) -> None:
         async with self._lock:
             if self._stopped:
                 return
@@ -212,6 +259,9 @@ class RoomTempWriter:
                     self.blocked_strategy = strategy
                     return
                 self.blocked_strategy = None
+                # Without room influence the value has no effect anyway.
+                if fallback and strategy != CONTROL_STRATEGY_ROOM_INFLUENCE:
+                    return
                 await self._coordinator.async_write_value(
                     self._hc.room_actual_temp_reg, value, refresh=False
                 )
@@ -238,14 +288,27 @@ class RoomTempWriter:
 
     @callback
     def _source_unusable(self) -> None:
-        if self._issue_raised or self._cancel_unavailable_timer is not None:
-            return
-        self._cancel_unavailable_timer = async_call_later(
-            self._hass, SOURCE_UNAVAILABLE_ISSUE_DELAY_SECONDS, self._raise_issue
-        )
+        if not self.fallback_active and self._cancel_fallback_timer is None:
+            self._cancel_fallback_timer = async_call_later(
+                self._hass, FALLBACK_DELAY_SECONDS, self._start_fallback
+            )
+        if not self._issue_raised and self._cancel_unavailable_timer is None:
+            self._cancel_unavailable_timer = async_call_later(
+                self._hass, SOURCE_UNAVAILABLE_ISSUE_DELAY_SECONDS, self._raise_issue
+            )
 
     @callback
     def _source_usable(self) -> None:
+        if self._cancel_fallback_timer is not None:
+            self._cancel_fallback_timer()
+            self._cancel_fallback_timer = None
+        if self.fallback_active:
+            _LOGGER.info(
+                "%s: %s is usable again, sending its temperature",
+                self._hc.key,
+                self._entity_id,
+            )
+            self.fallback_active = False
         if self._cancel_unavailable_timer is not None:
             self._cancel_unavailable_timer()
             self._cancel_unavailable_timer = None
@@ -254,6 +317,17 @@ class RoomTempWriter:
                 self._hass, DOMAIN, _source_unavailable_issue_id(self._entry, self._hc)
             )
             self._issue_raised = False
+
+    @callback
+    def _start_fallback(self, now: datetime) -> None:
+        self._cancel_fallback_timer = None
+        _LOGGER.warning(
+            "%s: %s has no usable temperature, sending the room setpoint instead",
+            self._hc.key,
+            self._entity_id,
+        )
+        self.fallback_active = True
+        self._evaluate(force=True)
 
     @callback
     def _raise_issue(self, now: datetime) -> None:
@@ -274,6 +348,7 @@ class RoomTempWriter:
 
     def as_diagnostics(self) -> dict[str, Any]:
         return {
+            "fallback_active": self.fallback_active,
             "last_written_value": self.last_written_value,
             "last_written_at": (
                 self.last_written_at.isoformat() if self.last_written_at else None

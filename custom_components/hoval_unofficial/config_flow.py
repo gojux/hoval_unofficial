@@ -48,6 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 FIELD_SOURCE = "current_temp_source"
 FIELD_ENTITY = "current_temp_entity_id"
 FIELD_ROOM_INFLUENCE = "room_influence"
+FIELD_ACCEPT_RISKS = "accept_risks"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -201,7 +202,10 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
     def __init__(self) -> None:
         self._hc: HeatingCircuit = HEATING_CIRCUIT_1
         self._pending_input: dict[str, Any] = {}
+        # Confirmations given for the pending input; cleared whenever the
+        # circuit form is shown again.
         self._room_influence_confirmed = False
+        self._risks_accepted = False
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -283,8 +287,6 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
             not sensor_found and strategy in CONTROL_STRATEGY_WRITABLE
         )
         offer_room_influence = strategy in CONTROL_STRATEGY_WRITABLE
-        room_influence_confirmed = self._room_influence_confirmed
-        self._room_influence_confirmed = False
 
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -315,10 +317,26 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
                 and room_influence
                 and source != CURRENT_TEMP_SOURCE_ENTITY_WRITE
                 and not sensor_found
-                and not room_influence_confirmed
+                and not self._room_influence_confirmed
             ):
                 self._pending_input = user_input
                 return await self.async_step_confirm_room_influence()
+
+            # Only a value that is sent and included in the control strategy
+            # lets Home Assistant drive the controller.
+            influence_after = (
+                room_influence
+                if room_influence is not None
+                else strategy == CONTROL_STRATEGY_ROOM_INFLUENCE
+            )
+            if (
+                not errors
+                and source == CURRENT_TEMP_SOURCE_ENTITY_WRITE
+                and influence_after
+                and not self._risks_accepted
+            ):
+                self._pending_input = user_input
+                return await self.async_step_confirm_risks()
 
             if not errors:
                 try:
@@ -389,6 +407,8 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
                 )
             ] = bool
 
+        self._room_influence_confirmed = False
+        self._risks_accepted = False
         return self.async_show_form(
             step_id="circuit",
             data_schema=vol.Schema(schema),
@@ -424,6 +444,27 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         return await self.async_step_circuit()
+
+    async def async_step_confirm_risks(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input.get(FIELD_ACCEPT_RISKS):
+                self._risks_accepted = True
+                return await self.async_step_circuit(self._pending_input)
+            errors["base"] = "risks_not_accepted"
+
+        return self.async_show_form(
+            step_id="confirm_risks",
+            data_schema=vol.Schema(
+                {vol.Required(FIELD_ACCEPT_RISKS, default=False): bool}
+            ),
+            errors=errors,
+            description_placeholders={
+                "circuit": self._hc.key.removeprefix("heating_circuit_"),
+            },
+        )
 
     async def _async_apply_circuit(
         self,

@@ -34,6 +34,9 @@ STRATEGY_REGISTERS = {1: 27510, 2: 27511, 3: 27512}
 SOURCE_ENTITY = "sensor.e2e_room_temperature"
 # The writer sends a change at most once per minute.
 WRITE_TIMEOUT_SECONDS = 90
+SETPOINT_REGISTERS = {1: 1493, 2: 1494, 3: 1495}
+# The room setpoint is sent after 5 minutes without a usable value.
+FALLBACK_TIMEOUT_SECONDS = 6 * 60
 
 EXPECTED_ENABLED = [
     ("sensor.", "outdoor_temperature"),
@@ -247,8 +250,15 @@ def submit_form(token: str, form: dict, data: dict) -> dict:
     )
 
 
+def accept_risks(token: str, result: dict) -> dict:
+    if result.get("step_id") == "confirm_risks":
+        return submit_form(token, result, {"accept_risks": True})
+    return result
+
+
 def configure_circuit(token: str, entry_id: str, circuit: int, data: dict) -> None:
     result = submit_form(token, open_circuit_form(token, entry_id, circuit), data)
+    result = accept_risks(token, result)
     if result.get("type") != "create_entry":
         raise SystemExit(f"Options flow did not save: {result}")
 
@@ -277,29 +287,42 @@ def check_sending(token: str, entry_id: str) -> None:
         raise SystemExit("Strategy was changed although the form was rejected")
 
     set_source_state(token, "21.5")
-    configure_circuit(
+    result = submit_form(
         token,
-        entry_id,
-        1,
+        open_circuit_form(token, entry_id, 1),
         {"current_temp_source": "entity_write", "current_temp_entity_id": SOURCE_ENTITY},
     )
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Sending without room influence asked to confirm: {result}")
     expect_sim(room, 215)
     if read_sim(strategy) != 0:
         raise SystemExit("Sending changed the strategy without being asked to")
     print("OK: choosing to send writes the temperature, strategy stays")
 
-    configure_circuit(
-        token,
-        entry_id,
-        1,
-        {
-            "current_temp_source": "entity_write",
-            "current_temp_entity_id": SOURCE_ENTITY,
-            "room_influence": True,
-        },
-    )
+    data = {
+        "current_temp_source": "entity_write",
+        "current_temp_entity_id": SOURCE_ENTITY,
+        "room_influence": True,
+    }
+    confirm = submit_form(token, open_circuit_form(token, entry_id, 1), data)
+    if confirm.get("step_id") != "confirm_risks":
+        raise SystemExit(f"Room influence on a sent value did not ask to confirm: {confirm}")
+    rejected = submit_form(token, confirm, {"accept_risks": False})
+    if rejected.get("errors", {}).get("base") != "risks_not_accepted":
+        raise SystemExit(f"Continuing without accepting the risks was allowed: {rejected}")
+    if read_sim(strategy) != 0:
+        raise SystemExit("Strategy was changed before the risks were accepted")
+    result = submit_form(token, rejected, {"accept_risks": True})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Accepting the risks did not save: {result}")
     expect_sim(strategy, 1)
-    print("OK: the checkbox sets strategy 1")
+    print("OK: room influence on a sent value needs the risks to be accepted")
+
+    confirm = submit_form(token, open_circuit_form(token, entry_id, 1), data)
+    if confirm.get("step_id") != "confirm_risks":
+        raise SystemExit(f"Saving while room influence stays on did not ask: {confirm}")
+    accept_risks(token, confirm)
+    print("OK: saving while room influence stays on asks again")
 
     set_source_state(token, "22.0")
     expect_sim(room, 220, WRITE_TIMEOUT_SECONDS)
@@ -315,12 +338,35 @@ def check_sending(token: str, entry_id: str) -> None:
     print("OK: nothing is sent at another strategy")
 
     write_sim(strategy, 1)
+    check_fallback(token, entry_id)
     configure_circuit(
         token, entry_id, 1, {"current_temp_source": "none", "room_influence": False}
     )
     expect_sim(room, 0)
     expect_sim(strategy, 0)
     print("OK: switching off resets temperature and strategy")
+
+
+def check_fallback(token: str, entry_id: str) -> None:
+    room, setpoint = ROOM_REGISTERS[1], SETPOINT_REGISTERS[1]
+    write_sim(setpoint, 215)
+    set_source_state(token, "3.0")
+    expect_sim(room, 215, FALLBACK_TIMEOUT_SECONDS)
+    if not writer_status(token, entry_id, 1)["fallback_active"]:
+        raise SystemExit("Diagnostics don't show the fallback")
+    wait_for_current_temperature(token, None)
+    print("OK: an unusable source sends the room setpoint after 5 minutes")
+
+    write_sim(setpoint, 200)
+    expect_sim(room, 200, WRITE_TIMEOUT_SECONDS)
+    print("OK: a changed room setpoint is sent during the fallback")
+
+    set_source_state(token, "22.5")
+    expect_sim(room, 225)
+    if writer_status(token, entry_id, 1)["fallback_active"]:
+        raise SystemExit("The fallback didn't end when the source recovered")
+    print("OK: a recovered source is sent again right away")
+    set_source_state(token, "23.0")
 
 
 def wait_for_current_temperature(token: str, expected: float | None) -> None:
@@ -397,6 +443,7 @@ def check_sensor_detection(token: str, entry_id: str) -> None:
         raise SystemExit("Going back lost the checkbox")
     confirm = submit_form(token, back, data)
     result = submit_form(token, confirm, {"next_step_id": "confirm_room_influence_yes"})
+    result = accept_risks(token, result)
     if result.get("type") != "create_entry":
         raise SystemExit(f"Confirming did not save: {result}")
     expect_sim(STRATEGY_REGISTERS[3], 1)

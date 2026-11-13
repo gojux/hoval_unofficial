@@ -69,13 +69,21 @@
           "confirm_room_influence_yes": "A room sensor is connected: include it in the control strategy",
           "confirm_room_influence_no": "Go back"
         }
+      },
+      "confirm_risks": {
+        "title": "Heating circuit {circuit}: please read before turning this on",
+        "description": "The room temperature then directly affects how the heat pump controls this heating circuit:\n\n- A room temperature below the setpoint raises the flow temperature, a few kelvin can be enough to reach the maximum flow temperature.\n- A room temperature above the setpoint can switch the heating circuit off.\n- If the entity has no usable value for 5 minutes (unavailable, outside 5–40 °C, or no report for 2 hours), the room setpoint is sent instead, so the room temperature has no effect until the entity is usable again.\n- If Home Assistant itself is down, the controller keeps working with the last value it received.\n- How strongly the controller reacts depends on the parameter \"Room temperature compensation\" (03-007) on the operating module. For underfloor heating, Hoval recommends no more than 4.\n\nClose this dialog to change nothing.",
+        "data": {
+          "accept_risks": "I have read these notes and want to continue"
+        }
       }
     },
     "error": {
       "entity_required": "Select the entity to send to the controller.",
-      "entity_unavailable": "This entity currently has no usable temperature (-20 to 50 °C).",
+      "entity_unavailable": "This entity currently has no usable temperature (5 to 40 °C).",
       "strategy_not_writable": "The current state of the controller does not allow sending a value.",
-      "write_failed": "Writing to the controller failed. Check the log for details."
+      "write_failed": "Writing to the controller failed. Check the log for details.",
+      "risks_not_accepted": "Confirm the notes to continue."
     },
     "abort": {
       "not_loaded": "The integration is not running. Check the connection to the controller.",
@@ -322,7 +330,7 @@
   "issues": {
     "room_temp_source_unavailable": {
       "title": "Room temperature for heating circuit {circuit} is not being updated",
-      "description": "{entity_id} has had no usable temperature for 30 minutes, so nothing is being sent to the controller. The controller keeps working with the last value it received. Fix the entity, or choose another source under the integration's options."
+      "description": "{entity_id} has had no usable temperature for 30 minutes (unavailable, outside 5–40 °C, or no report for 2 hours). The room setpoint is sent to the controller instead, so the room temperature has no effect on the flow temperature. Fix the entity, or choose another source under the integration's options."
     }
   }
 }
