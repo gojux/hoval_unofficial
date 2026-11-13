@@ -90,7 +90,7 @@ must be the *only* source of the name.
 
 ## Room temperature source (per heating circuit)
 
-Each heating circuit's `current_temperature` can come from one of three
+Each heating circuit's `current_temperature` can come from one of four
 sources, configurable **individually per circuit** via the integration's
 **options** (entry's three-dot menu → "Configure" — not the initial setup
 form, so it can be changed anytime without re-adding the integration):
@@ -100,7 +100,8 @@ form, so it can be changed anytime without re-adding the integration):
   in `const.py`, a fixed register per circuit (addresses `1510`/`1511`/`1512`
   for HC1/HC2/HC3 on this Hoval controller). If you're adapting this to a
   different installation/model and don't know the address, set it to `None`
-  for that circuit -- selecting "Modbus" then simply yields no value.
+  for that circuit -- selecting "Modbus" then simply yields no value. The
+  same goes for a register value of 0, which means there's no sensor.
 - **Home Assistant entity** -- mirrors the state of an existing `sensor`
   entity with `device_class: temperature` (e.g. a separate smart
   thermostat's temperature sensor, so you can use a different sensor than
@@ -109,6 +110,22 @@ form, so it can be changed anytime without re-adding the integration):
   interval, so changes show up immediately rather than waiting for the
   next coordinator refresh. Non-numeric or `unavailable`/`unknown` states
   are treated as "no current temperature" rather than raising an error.
+- **Home Assistant entity, sent to the controller** (`entity_write`) -- same
+  display as above, and `RoomTempWriter` (`room_temp.py`) writes the value to
+  `room_actual_temp_reg`. It runs independently of the climate entities,
+  since HC2/HC3 are disabled by default, and reads the control strategy
+  directly before each write, independent of what is being polled. If the
+  entity is unusable for 5 minutes or hasn't reported (`last_reported`) for
+  2 hours, it sends the room setpoint (`read_setpoint_reg`, kept polled
+  through its own coordinator listener) while the strategy includes room
+  influence, which neutralizes the room influence until the entity recovers.
+
+The form for a circuit is built from what is read when it opens: a value in
+the room register other than 0 counts as a sensor, except while sending, when
+the register holds the integration's own value. Only strategies 0 and 1 are
+ever written, independently of the chosen source, and only 0 -> 1 is
+remembered (`previous_strategy_key`), so it can be restored when the entry is
+removed (`async_remove_entry`).
 
 Changing any of these options reloads the config entry automatically
 (same mechanism as changing `scan_interval`).

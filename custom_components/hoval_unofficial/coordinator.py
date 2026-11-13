@@ -5,6 +5,7 @@ import logging
 import struct
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -127,6 +128,40 @@ def encode_value(value: float, data_type: DataType) -> list[int]:
     raise ValueError(f"Unknown data_type: {data_type}")
 
 
+async def read_register(
+    client: AsyncModbusTcpClient, device_id: int, reg: RegisterDef
+) -> float:
+    """Reads a single register's value. Raises ModbusException on failure."""
+    if reg.register_type == "holding":
+        result = await client.read_holding_registers(
+            reg.address, count=reg.register_count, device_id=device_id
+        )
+    else:
+        result = await client.read_input_registers(
+            reg.address, count=reg.register_count, device_id=device_id
+        )
+    if result.isError():
+        raise ModbusException(f"Error reading {reg.key}: {result}")
+    return decode_value(result.registers, reg.data_type) * reg.scale
+
+
+async def write_register(
+    client: AsyncModbusTcpClient, device_id: int, reg: RegisterDef, value: float
+) -> None:
+    """Writes a holding register's value. Raises ModbusException on failure."""
+    registers = encode_value(value / reg.scale, reg.data_type)
+    if len(registers) == 1:
+        result = await client.write_register(
+            reg.address, registers[0], device_id=device_id
+        )
+    else:
+        result = await client.write_registers(
+            reg.address, registers, device_id=device_id
+        )
+    if result.isError():
+        raise ModbusException(f"Error writing {reg.key}: {result}")
+
+
 class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
     """Periodically reads all configured registers and provides them to the entities."""
 
@@ -150,6 +185,9 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         self.port = port
         self.device_id = device_id
         self.client = AsyncModbusTcpClient(host, port=port)
+        # Heating circuit key -> RoomTempWriter (room_temp.py), for the
+        # circuits sending a room temperature to the controller.
+        self.room_temp_writers: dict[str, Any] = {}
 
     async def _ensure_connected(self) -> None:
         if not self.client.connected:
@@ -244,29 +282,27 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
     def _store_value(data: dict[str, float], reg: RegisterDef, registers: list[int]) -> None:
         data[reg.key] = decode_value(registers, reg.data_type) * reg.scale
 
-    async def async_write_value(self, reg: RegisterDef, value: float) -> None:
-        """Writes a value to a holding register and refreshes the data afterwards."""
+    async def async_read_value(self, reg: RegisterDef) -> float:
+        """Reads a register directly, independent of what is being polled."""
         await self._ensure_connected()
-        raw_value = value / reg.scale
-        registers = encode_value(raw_value, reg.data_type)
-
         try:
-            if len(registers) == 1:
-                result = await self.client.write_register(
-                    reg.address, registers[0], device_id=self.device_id
-                )
-            else:
-                result = await self.client.write_registers(
-                    reg.address, registers, device_id=self.device_id
-                )
+            return await read_register(self.client, self.device_id, reg)
+        except ModbusException as err:
+            raise UpdateFailed(f"Modbus error while reading {reg.key}: {err}") from err
 
-            if result.isError():
-                raise UpdateFailed(f"Error writing {reg.key}: {result}")
-
+    async def async_write_value(
+        self, reg: RegisterDef, value: float, refresh: bool = True
+    ) -> None:
+        """Writes a value to a holding register and, unless told otherwise,
+        refreshes the data afterwards."""
+        await self._ensure_connected()
+        try:
+            await write_register(self.client, self.device_id, reg, value)
         except ModbusException as err:
             raise UpdateFailed(f"Modbus error while writing {reg.key}: {err}") from err
 
-        await self.async_request_refresh()
+        if refresh:
+            await self.async_request_refresh()
 
     async def async_close(self) -> None:
         self.client.close()

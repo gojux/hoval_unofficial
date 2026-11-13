@@ -35,6 +35,7 @@ from .const import (
     CLIMATE_PRESET_OPTIONS,
     CLIMATE_PRESET_WEEK1,
     CURRENT_TEMP_SOURCE_ENTITY,
+    CURRENT_TEMP_SOURCE_ENTITY_WRITE,
     CURRENT_TEMP_SOURCE_MODBUS,
     DEFAULT_CURRENT_TEMP_SOURCE,
     DOMAIN,
@@ -48,6 +49,7 @@ from .const import (
     current_temp_source_key,
 )
 from .coordinator import HovalModbusCoordinator
+from .room_temp import has_room_sensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -186,7 +188,7 @@ class HovalRoomClimate(
             model="Heat Pump Controller",
         )
 
-        # Only used for CURRENT_TEMP_SOURCE_ENTITY: mirrors the source
+        # Only used for the entity-based sources: mirrors the source
         # entity's state, kept up to date via async_track_state_change_event
         # rather than the Modbus polling interval, so changes show up
         # immediately instead of waiting for the next coordinator refresh.
@@ -253,7 +255,8 @@ class HovalRoomClimate(
                 self._last_preset = restored_preset
 
         if (
-            self._current_temp_source == CURRENT_TEMP_SOURCE_ENTITY
+            self._current_temp_source
+            in (CURRENT_TEMP_SOURCE_ENTITY, CURRENT_TEMP_SOURCE_ENTITY_WRITE)
             and self._current_temp_entity_id
         ):
             self._update_external_current_temp(
@@ -436,7 +439,16 @@ class HovalRoomClimate(
             reg = self._hc.room_actual_temp_reg
             if reg is None:
                 return None
-            return self.coordinator.data.get(reg.key)
+            value = self.coordinator.data.get(reg.key)
+            # Without a sensor the register holds 0, which isn't a temperature.
+            return value if value is not None and has_room_sensor(value) else None
+        if self._current_temp_source == CURRENT_TEMP_SOURCE_ENTITY_WRITE:
+            # While the room setpoint is sent instead, the entity's value
+            # isn't what the controller works with.
+            writer = self.coordinator.room_temp_writers.get(self._hc.key)
+            if writer is not None and writer.fallback_active:
+                return None
+            return self._external_current_temp
         if self._current_temp_source == CURRENT_TEMP_SOURCE_ENTITY:
             return self._external_current_temp
         return None  # CURRENT_TEMP_SOURCE_NONE (or unknown/unset)

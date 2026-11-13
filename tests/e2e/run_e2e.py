@@ -1,10 +1,13 @@
 """End-to-end check: onboard Home Assistant, add the integration, verify its entities.
 
 Uses only the Python standard library and talks to a Home Assistant instance
-started via tests/e2e/docker-compose.yml on localhost:8123.
+started via tests/e2e/docker-compose.yml on localhost:8123, and directly to
+the Modbus simulator to set up and verify register values.
 """
 import json
 import os
+import socket
+import struct
 import sys
 import time
 import urllib.error
@@ -25,6 +28,15 @@ MODBUS_PORT = 502
 MODBUS_DEVICE_ID = 1
 STARTUP_TIMEOUT_SECONDS = 300
 STATE_TIMEOUT_SECONDS = 120
+MODBUS_SIM_ADDRESS = ("localhost", int(os.environ.get("MODBUS_SIM_PORT", "15020")))
+ROOM_REGISTERS = {1: 1510, 2: 1511, 3: 1512}
+STRATEGY_REGISTERS = {1: 27510, 2: 27511, 3: 27512}
+SOURCE_ENTITY = "sensor.e2e_room_temperature"
+# The writer sends a change at most once per minute.
+WRITE_TIMEOUT_SECONDS = 90
+SETPOINT_REGISTERS = {1: 1493, 2: 1494, 3: 1495}
+# The room setpoint is sent after 5 minutes without a usable value.
+FALLBACK_TIMEOUT_SECONDS = 6 * 60
 
 EXPECTED_ENABLED = [
     ("sensor.", "outdoor_temperature"),
@@ -159,6 +171,308 @@ def check(states: list[dict]) -> None:
             print(f"  {eid} = {by_id[eid]['state']}")
 
 
+def modbus_request(pdu: bytes) -> bytes:
+    frame = struct.pack(">HHHB", 1, 0, len(pdu) + 1, MODBUS_DEVICE_ID) + pdu
+    with socket.create_connection(MODBUS_SIM_ADDRESS, timeout=10) as sock:
+        sock.sendall(frame)
+        return sock.recv(256)[7:]
+
+
+def read_sim(address: int) -> int:
+    return struct.unpack(">H", modbus_request(struct.pack(">BHH", 3, address, 1))[2:4])[0]
+
+
+def write_sim(address: int, value: int) -> None:
+    modbus_request(struct.pack(">BHH", 6, address, value))
+
+
+def expect_sim(address: int, value: int, timeout: float = 15) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if read_sim(address) == value:
+            return
+        time.sleep(1)
+    raise SystemExit(f"Register {address} is {read_sim(address)}, expected {value}")
+
+
+def set_source_state(token: str, value: str) -> None:
+    request(
+        "POST",
+        f"/api/states/{SOURCE_ENTITY}",
+        body={
+            "state": value,
+            "attributes": {"unit_of_measurement": "°C", "device_class": "temperature"},
+        },
+        token=token,
+    )
+
+
+def open_circuit_form(token: str, entry_id: str, circuit: int) -> dict:
+    # Saved options reload the entry, during which the form isn't available.
+    deadline = time.monotonic() + STATE_TIMEOUT_SECONDS
+    while True:
+        menu = request(
+            "POST",
+            "/api/config/config_entries/options/flow",
+            body={"handler": entry_id},
+            token=token,
+        )
+        if menu.get("type") != "menu":
+            raise SystemExit(f"Options flow did not open its menu: {menu}")
+        form = request(
+            "POST",
+            f"/api/config/config_entries/options/flow/{menu['flow_id']}",
+            body={"next_step_id": f"heating_circuit_{circuit}"},
+            token=token,
+        )
+        if form.get("reason") != "not_loaded" or time.monotonic() > deadline:
+            break
+        time.sleep(1)
+    if form.get("type") != "form" or form.get("step_id") != "circuit":
+        raise SystemExit(f"Options flow did not open the circuit form: {form}")
+    return form
+
+
+def form_fields(form: dict) -> dict:
+    return {field["name"]: field for field in form["data_schema"]}
+
+
+def source_options(form: dict) -> list[str]:
+    return form_fields(form)["current_temp_source"]["selector"]["select"]["options"]
+
+
+def submit_form(token: str, form: dict, data: dict) -> dict:
+    return request(
+        "POST",
+        f"/api/config/config_entries/options/flow/{form['flow_id']}",
+        body=data,
+        token=token,
+    )
+
+
+def accept_risks(token: str, result: dict) -> dict:
+    if result.get("step_id") == "confirm_risks":
+        return submit_form(token, result, {"accept_risks": True})
+    return result
+
+
+def configure_circuit(token: str, entry_id: str, circuit: int, data: dict) -> None:
+    result = submit_form(token, open_circuit_form(token, entry_id, circuit), data)
+    result = accept_risks(token, result)
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Options flow did not save: {result}")
+
+
+def writer_status(token: str, entry_id: str, circuit: int) -> dict:
+    diagnostics = request(
+        "GET", f"/api/diagnostics/config_entry/{entry_id}", token=token
+    )
+    return diagnostics["data"]["room_temp_writers"][f"heating_circuit_{circuit}"]
+
+
+def check_sending(token: str, entry_id: str) -> None:
+    room, strategy = ROOM_REGISTERS[1], STRATEGY_REGISTERS[1]
+    set_source_state(token, "unavailable")
+    form = open_circuit_form(token, entry_id, 1)
+    if "entity_write" not in source_options(form):
+        raise SystemExit("Sending is not offered without sensor at strategy 0")
+    result = submit_form(
+        token,
+        form,
+        {"current_temp_source": "entity_write", "current_temp_entity_id": SOURCE_ENTITY},
+    )
+    if result.get("errors", {}).get("current_temp_entity_id") != "entity_unavailable":
+        raise SystemExit(f"Unusable source entity was not rejected: {result}")
+    if read_sim(strategy) != 0:
+        raise SystemExit("Strategy was changed although the form was rejected")
+
+    set_source_state(token, "21.5")
+    result = submit_form(
+        token,
+        open_circuit_form(token, entry_id, 1),
+        {"current_temp_source": "entity_write", "current_temp_entity_id": SOURCE_ENTITY},
+    )
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Sending without room influence asked to confirm: {result}")
+    expect_sim(room, 215)
+    if read_sim(strategy) != 0:
+        raise SystemExit("Sending changed the strategy without being asked to")
+    print("OK: choosing to send writes the temperature, strategy stays")
+
+    data = {
+        "current_temp_source": "entity_write",
+        "current_temp_entity_id": SOURCE_ENTITY,
+        "room_influence": True,
+    }
+    confirm = submit_form(token, open_circuit_form(token, entry_id, 1), data)
+    if confirm.get("step_id") != "confirm_risks":
+        raise SystemExit(f"Room influence on a sent value did not ask to confirm: {confirm}")
+    rejected = submit_form(token, confirm, {"accept_risks": False})
+    if rejected.get("errors", {}).get("base") != "risks_not_accepted":
+        raise SystemExit(f"Continuing without accepting the risks was allowed: {rejected}")
+    if read_sim(strategy) != 0:
+        raise SystemExit("Strategy was changed before the risks were accepted")
+    result = submit_form(token, rejected, {"accept_risks": True})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Accepting the risks did not save: {result}")
+    expect_sim(strategy, 1)
+    print("OK: room influence on a sent value needs the risks to be accepted")
+
+    confirm = submit_form(token, open_circuit_form(token, entry_id, 1), data)
+    if confirm.get("step_id") != "confirm_risks":
+        raise SystemExit(f"Saving while room influence stays on did not ask: {confirm}")
+    accept_risks(token, confirm)
+    print("OK: saving while room influence stays on asks again")
+
+    set_source_state(token, "22.0")
+    expect_sim(room, 220, WRITE_TIMEOUT_SECONDS)
+    print("OK: a changed temperature is sent")
+
+    write_sim(strategy, 3)
+    set_source_state(token, "23.0")
+    time.sleep(WRITE_TIMEOUT_SECONDS)
+    if read_sim(room) != 220:
+        raise SystemExit("Temperature was sent although the strategy is 3")
+    if writer_status(token, entry_id, 1)["blocked_by_control_strategy"] != 3:
+        raise SystemExit("Diagnostics don't show the blocking strategy")
+    print("OK: nothing is sent at another strategy")
+
+    write_sim(strategy, 1)
+    check_fallback(token, entry_id)
+    configure_circuit(
+        token, entry_id, 1, {"current_temp_source": "none", "room_influence": False}
+    )
+    expect_sim(room, 0)
+    expect_sim(strategy, 0)
+    print("OK: switching off resets temperature and strategy")
+
+
+def check_fallback(token: str, entry_id: str) -> None:
+    room, setpoint = ROOM_REGISTERS[1], SETPOINT_REGISTERS[1]
+    write_sim(setpoint, 215)
+    set_source_state(token, "3.0")
+    expect_sim(room, 215, FALLBACK_TIMEOUT_SECONDS)
+    if not writer_status(token, entry_id, 1)["fallback_active"]:
+        raise SystemExit("Diagnostics don't show the fallback")
+    wait_for_current_temperature(token, None)
+    print("OK: an unusable source sends the room setpoint after 5 minutes")
+
+    write_sim(setpoint, 200)
+    expect_sim(room, 200, WRITE_TIMEOUT_SECONDS)
+    print("OK: a changed room setpoint is sent during the fallback")
+
+    set_source_state(token, "22.5")
+    expect_sim(room, 225)
+    if writer_status(token, entry_id, 1)["fallback_active"]:
+        raise SystemExit("The fallback didn't end when the source recovered")
+    print("OK: a recovered source is sent again right away")
+    set_source_state(token, "23.0")
+
+
+def wait_for_current_temperature(token: str, expected: float | None) -> None:
+    deadline = time.monotonic() + STATE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        states = request("GET", "/api/states", token=token)
+        climate = next(
+            s for s in states if s["entity_id"].endswith("_heating_circuit_1")
+        )
+        current = climate["attributes"].get("current_temperature")
+        if current == expected:
+            return
+        time.sleep(3)
+    raise SystemExit(f"current_temperature is {current}, expected {expected}")
+
+
+def check_reading_room_sensor(token: str, entry_id: str) -> None:
+    configure_circuit(
+        token, entry_id, 1, {"current_temp_source": "modbus", "room_influence": False}
+    )
+    wait_for_current_temperature(token, None)
+    print("OK: register value 0 is shown as no current temperature")
+
+    write_sim(ROOM_REGISTERS[1], 215)
+    wait_for_current_temperature(token, 21.5)
+    print("OK: a room sensor's value is shown")
+
+    write_sim(ROOM_REGISTERS[1], 0)
+    configure_circuit(
+        token, entry_id, 1, {"current_temp_source": "none", "room_influence": False}
+    )
+
+
+def check_sensor_detection(token: str, entry_id: str) -> None:
+    room, strategy = ROOM_REGISTERS[2], STRATEGY_REGISTERS[2]
+    write_sim(room, 200)
+    form = open_circuit_form(token, entry_id, 2)
+    if "entity_write" in source_options(form):
+        raise SystemExit("Sending is offered although a room sensor was found")
+    if form_fields(form)["room_influence"].get("default") is not False:
+        raise SystemExit("Strategy change is not offered for a found room sensor")
+    result = submit_form(
+        token, form, {"current_temp_source": "modbus", "room_influence": True}
+    )
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Options flow did not save: {result}")
+    expect_sim(strategy, 1)
+    print("OK: a room sensor is detected and strategy 1 is offered")
+
+    write_sim(STRATEGY_REGISTERS[3], 3)
+    if "entity_write" in source_options(open_circuit_form(token, entry_id, 3)):
+        raise SystemExit("Sending is offered at strategy 3")
+    write_sim(STRATEGY_REGISTERS[3], 1)
+    form = open_circuit_form(token, entry_id, 3)
+    if form_fields(form)["room_influence"].get("default") is not True:
+        raise SystemExit("The checkbox doesn't reflect strategy 1")
+    if "modbus" not in source_options(form):
+        raise SystemExit("Reading the controller's sensor is not offered")
+    print("OK: the offers follow the control strategy")
+
+    # Room influence without any room temperature needs a confirmation.
+    write_sim(STRATEGY_REGISTERS[3], 0)
+    form = open_circuit_form(token, entry_id, 3)
+    data = {"current_temp_source": "none", "room_influence": True}
+    confirm = submit_form(token, form, data)
+    if confirm.get("step_id") != "confirm_room_influence":
+        raise SystemExit(f"No confirmation was asked for: {confirm}")
+    if read_sim(STRATEGY_REGISTERS[3]) != 0:
+        raise SystemExit("Strategy was changed before the confirmation")
+    back = submit_form(token, confirm, {"next_step_id": "confirm_room_influence_no"})
+    if back.get("step_id") != "circuit":
+        raise SystemExit(f"Going back did not reopen the form: {back}")
+    if form_fields(back)["room_influence"].get("default") is not True:
+        raise SystemExit("Going back lost the checkbox")
+    confirm = submit_form(token, back, data)
+    result = submit_form(token, confirm, {"next_step_id": "confirm_room_influence_yes"})
+    result = accept_risks(token, result)
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Confirming did not save: {result}")
+    expect_sim(STRATEGY_REGISTERS[3], 1)
+    print("OK: room influence without a room temperature needs confirmation")
+
+
+def check_removal(token: str, entry_id: str) -> None:
+    configure_circuit(
+        token,
+        entry_id,
+        1,
+        {
+            "current_temp_source": "entity_write",
+            "current_temp_entity_id": SOURCE_ENTITY,
+            "room_influence": True,
+        },
+    )
+    expect_sim(ROOM_REGISTERS[1], 230)
+    expect_sim(STRATEGY_REGISTERS[1], 1)
+    request("DELETE", f"/api/config/config_entries/entry/{entry_id}", token=token)
+    expect_sim(ROOM_REGISTERS[1], 0)
+    expect_sim(STRATEGY_REGISTERS[1], 0)
+    expect_sim(STRATEGY_REGISTERS[2], 0)
+    expect_sim(STRATEGY_REGISTERS[3], 0)
+    if read_sim(ROOM_REGISTERS[2]) != 200:
+        raise SystemExit("Removal overwrote the value of a physical room sensor")
+    print("OK: removing the integration resets what it changed")
+
+
 def main() -> None:
     wait_for_home_assistant()
     token = onboard()
@@ -166,6 +480,10 @@ def main() -> None:
     states = wait_for_states(token)
     check(states)
     check_diagnostics(token, entry_id)
+    check_sending(token, entry_id)
+    check_reading_room_sensor(token, entry_id)
+    check_sensor_detection(token, entry_id)
+    check_removal(token, entry_id)
 
 
 if __name__ == "__main__":

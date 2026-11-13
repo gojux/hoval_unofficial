@@ -7,26 +7,48 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_SCAN_INTERVAL
-from homeassistant.data_entry_flow import FlowResult, section
+from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
+from homeassistant.helpers.translation import async_get_translations
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from pymodbus.client import AsyncModbusTcpClient
 
 from .const import (
     CONF_DEVICE_ID,
-    CURRENT_TEMP_SOURCE_OPTIONS,
+    CONTROL_STRATEGY_MAP,
+    CONTROL_STRATEGY_ROOM_INFLUENCE,
+    CONTROL_STRATEGY_UNKNOWN,
+    CONTROL_STRATEGY_WEATHER_COMPENSATED,
+    CONTROL_STRATEGY_WRITABLE,
+    CURRENT_TEMP_SOURCE_ENTITY,
+    CURRENT_TEMP_SOURCE_ENTITY_WRITE,
+    CURRENT_TEMP_SOURCE_MODBUS,
+    CURRENT_TEMP_SOURCE_NONE,
     DEFAULT_CURRENT_TEMP_SOURCE,
     DEFAULT_DEVICE_ID,
     DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    HEATING_CIRCUIT_1,
+    HEATING_CIRCUIT_2,
+    HEATING_CIRCUIT_3,
     HEATING_CIRCUITS,
+    HeatingCircuit,
     current_temp_entity_key,
     current_temp_source_key,
+    previous_strategy_key,
 )
+from .coordinator import HovalModbusCoordinator
+from .room_temp import has_room_sensor, parse_room_temperature
 
 _LOGGER = logging.getLogger(__name__)
+
+FIELD_SOURCE = "current_temp_source"
+FIELD_ENTITY = "current_temp_entity_id"
+FIELD_ROOM_INFLUENCE = "room_influence"
+FIELD_ACCEPT_RISKS = "accept_risks"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -170,94 +192,353 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
     """Allows changing the polling interval and, per heating circuit, where
-    its `current_temperature` comes from (Modbus / none / a HA entity).
+    its room temperature comes from and whether it is sent to the controller.
+
+    Each menu entry is its own form that ends the flow when submitted. The
+    forms of the heating circuits depend on what is read from the controller
+    when they are opened, and submitting one can write to the controller.
     """
+
+    def __init__(self) -> None:
+        self._hc: HeatingCircuit = HEATING_CIRCUIT_1
+        self._pending_input: dict[str, Any] = {}
+        # Confirmations given for the pending input; cleared whenever the
+        # circuit form is shown again.
+        self._room_influence_confirmed = False
+        self._risks_accepted = False
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        if user_input is not None:
-            # user_input is nested by section, e.g.:
-            # {"general": {"scan_interval": 30}, "heating_circuit_1": {...}, ...}
-            # Flatten it back into the flat structure the rest of the
-            # integration expects (const.py's key helpers, __init__.py,
-            # climate.py all read entry.options with flat keys like
-            # "heating_circuit_1_current_temp_source" directly, with no
-            # knowledge of the section grouping, which exists purely for
-            # display).
-            flat_data: dict[str, Any] = {}
-            for section_values in user_input.values():
-                flat_data.update(section_values)
-            return self.async_create_entry(title="", data=flat_data)
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["general", *(hc.key for hc in HEATING_CIRCUITS)],
+        )
 
-        # Pre-fill fields via `description={"suggested_value": ...}`, NOT
-        # via vol.Optional's `default=` (which re-inserts itself whenever a
-        # field is missing from the submitted data -- exactly what happens
-        # when the entity picker's "X" clears a field, making it impossible
-        # to actually clear a previously selected value) and NOT via
-        # add_suggested_values_to_schema() (doesn't recurse into
-        # section()-wrapped fields -- see
-        # https://github.com/home-assistant/frontend/issues/22419).
+    async def async_step_general(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if user_input is not None:
+            options = dict(self.config_entry.options)
+            options.pop(CONF_SCAN_INTERVAL, None)
+            options.update(user_input)
+            return self.async_create_entry(title="", data=options)
+
         current_scan_interval = self.config_entry.options.get(
             CONF_SCAN_INTERVAL,
             self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
         )
-
-        general_schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_SCAN_INTERVAL,
-                    description={"suggested_value": current_scan_interval},
-                ): vol.Coerce(int),
-            }
-        )
-        schema_dict: dict[Any, Any] = {
-            vol.Required("general"): section(general_schema, {"collapsed": False}),
-        }
-
-        for hc in HEATING_CIRCUITS:
-            source_key = current_temp_source_key(hc)
-            entity_key = current_temp_entity_key(hc)
-
-            current_source = self.config_entry.options.get(
-                source_key, DEFAULT_CURRENT_TEMP_SOURCE
-            )
-            current_entity_id = self.config_entry.options.get(entity_key)
-
-            entity_field_kwargs: dict[str, Any] = {}
-            if current_entity_id:
-                entity_field_kwargs["description"] = {
-                    "suggested_value": current_entity_id
-                }
-
-            hc_schema = vol.Schema(
+        return self.async_show_form(
+            step_id="general",
+            data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        source_key,
-                        description={"suggested_value": current_source},
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=CURRENT_TEMP_SOURCE_OPTIONS,
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                            translation_key="current_temp_source",
-                        )
-                    ),
-                    # Always shown, but only relevant when the source above
-                    # is set to "entity" -- see HovalRoomClimate in climate.py.
-                    vol.Optional(
-                        entity_key, **entity_field_kwargs
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor", device_class="temperature"
-                        )
-                    ),
+                        CONF_SCAN_INTERVAL,
+                        description={"suggested_value": current_scan_interval},
+                    ): vol.Coerce(int),
                 }
+            ),
+        )
+
+    async def async_step_heating_circuit_1(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        self._hc = HEATING_CIRCUIT_1
+        return await self.async_step_circuit()
+
+    async def async_step_heating_circuit_2(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        self._hc = HEATING_CIRCUIT_2
+        return await self.async_step_circuit()
+
+    async def async_step_heating_circuit_3(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        self._hc = HEATING_CIRCUIT_3
+        return await self.async_step_circuit()
+
+    async def async_step_circuit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        coordinator: HovalModbusCoordinator | None = self.hass.data.get(
+            DOMAIN, {}
+        ).get(self.config_entry.entry_id)
+        if coordinator is None:
+            return self.async_abort(reason="not_loaded")
+
+        hc = self._hc
+        try:
+            strategy = int(await coordinator.async_read_value(hc.control_strategy_reg))
+            room_temperature = await coordinator.async_read_value(
+                hc.room_actual_temp_reg
             )
-            schema_dict[vol.Required(hc.key)] = section(
-                hc_schema, {"collapsed": False}
+        except UpdateFailed:
+            return self.async_abort(reason="cannot_read")
+
+        options = self.config_entry.options
+        current_source = options.get(
+            current_temp_source_key(hc), DEFAULT_CURRENT_TEMP_SOURCE
+        )
+        sending = current_source == CURRENT_TEMP_SOURCE_ENTITY_WRITE
+        # While sending, the register holds the integration's own value.
+        sensor_found = not sending and has_room_sensor(room_temperature)
+        can_send = sending or (
+            not sensor_found and strategy in CONTROL_STRATEGY_WRITABLE
+        )
+        offer_room_influence = strategy in CONTROL_STRATEGY_WRITABLE
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            source = user_input[FIELD_SOURCE]
+            entity_id = user_input.get(FIELD_ENTITY)
+            temperature = None
+            if source == CURRENT_TEMP_SOURCE_ENTITY_WRITE:
+                temperature = parse_room_temperature(
+                    self.hass.states.get(entity_id) if entity_id else None
+                )
+                if not entity_id:
+                    errors[FIELD_ENTITY] = "entity_required"
+                elif temperature is None:
+                    errors[FIELD_ENTITY] = "entity_unavailable"
+                elif not can_send:
+                    errors["base"] = "strategy_not_writable"
+
+            room_influence = (
+                user_input.get(FIELD_ROOM_INFLUENCE, False)
+                if offer_room_influence
+                else None
             )
+            # Without a detected sensor or a value being sent, room influence
+            # only works with a sensor the integration can't see, e.g. one
+            # retrofitted while it was sending.
+            if (
+                not errors
+                and room_influence
+                and source != CURRENT_TEMP_SOURCE_ENTITY_WRITE
+                and not sensor_found
+                and not self._room_influence_confirmed
+            ):
+                self._pending_input = user_input
+                return await self.async_step_confirm_room_influence()
+
+            # Only a value that is sent and included in the control strategy
+            # lets Home Assistant drive the controller.
+            influence_after = (
+                room_influence
+                if room_influence is not None
+                else strategy == CONTROL_STRATEGY_ROOM_INFLUENCE
+            )
+            if (
+                not errors
+                and source == CURRENT_TEMP_SOURCE_ENTITY_WRITE
+                and influence_after
+                and not self._risks_accepted
+            ):
+                self._pending_input = user_input
+                return await self.async_step_confirm_risks()
+
+            if not errors:
+                try:
+                    return self.async_create_entry(
+                        title="",
+                        data=await self._async_apply_circuit(
+                            coordinator,
+                            strategy,
+                            temperature,
+                            source,
+                            entity_id,
+                            room_influence,
+                        ),
+                    )
+                except UpdateFailed as err:
+                    _LOGGER.warning("%s: writing failed: %s", hc.key, err)
+                    errors["base"] = "write_failed"
+
+        source_options = [
+            CURRENT_TEMP_SOURCE_NONE,
+            CURRENT_TEMP_SOURCE_MODBUS,
+            CURRENT_TEMP_SOURCE_ENTITY,
+        ]
+        if can_send:
+            source_options.append(CURRENT_TEMP_SOURCE_ENTITY_WRITE)
+
+        # An unset source defaults to the sensor found on the controller.
+        previous_input = user_input or self._pending_input
+        suggested_source = previous_input.get(
+            FIELD_SOURCE,
+            options.get(
+                current_temp_source_key(hc),
+                CURRENT_TEMP_SOURCE_MODBUS
+                if sensor_found
+                else DEFAULT_CURRENT_TEMP_SOURCE,
+            ),
+        )
+        current_entity_id = previous_input.get(
+            FIELD_ENTITY, options.get(current_temp_entity_key(hc))
+        )
+        entity_field_kwargs: dict[str, Any] = {}
+        if current_entity_id:
+            entity_field_kwargs["description"] = {"suggested_value": current_entity_id}
+
+        schema: dict[Any, Any] = {
+            vol.Required(FIELD_SOURCE, default=suggested_source): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=source_options,
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                    translation_key="current_temp_source",
+                )
+            ),
+            # Always shown, but only relevant for the entity-based sources.
+            vol.Optional(FIELD_ENTITY, **entity_field_kwargs): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor", device_class="temperature"
+                )
+            ),
+        }
+        if offer_room_influence:
+            schema[
+                vol.Optional(
+                    FIELD_ROOM_INFLUENCE,
+                    default=previous_input.get(
+                        FIELD_ROOM_INFLUENCE,
+                        strategy == CONTROL_STRATEGY_ROOM_INFLUENCE,
+                    ),
+                )
+            ] = bool
+
+        self._room_influence_confirmed = False
+        self._risks_accepted = False
+        return self.async_show_form(
+            step_id="circuit",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+            description_placeholders={
+                "circuit": hc.key.removeprefix("heating_circuit_"),
+                "strategy": await self._async_strategy_name(strategy),
+                "room_temperature": self._format_temperature(room_temperature),
+            },
+        )
+
+    async def async_step_confirm_room_influence(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        return self.async_show_menu(
+            step_id="confirm_room_influence",
+            menu_options=[
+                "confirm_room_influence_yes",
+                "confirm_room_influence_no",
+            ],
+            description_placeholders={
+                "circuit": self._hc.key.removeprefix("heating_circuit_"),
+            },
+        )
+
+    async def async_step_confirm_room_influence_yes(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        self._room_influence_confirmed = True
+        return await self.async_step_circuit(self._pending_input)
+
+    async def async_step_confirm_room_influence_no(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        return await self.async_step_circuit()
+
+    async def async_step_confirm_risks(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if user_input.get(FIELD_ACCEPT_RISKS):
+                self._risks_accepted = True
+                return await self.async_step_circuit(self._pending_input)
+            errors["base"] = "risks_not_accepted"
 
         return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(schema_dict),
+            step_id="confirm_risks",
+            data_schema=vol.Schema(
+                {vol.Required(FIELD_ACCEPT_RISKS, default=False): bool}
+            ),
+            errors=errors,
+            description_placeholders={
+                "circuit": self._hc.key.removeprefix("heating_circuit_"),
+            },
+        )
+
+    async def _async_apply_circuit(
+        self,
+        coordinator: HovalModbusCoordinator,
+        strategy: int,
+        temperature: float | None,
+        source: str,
+        entity_id: str | None,
+        room_influence: bool | None,
+    ) -> dict[str, Any]:
+        """Writes the requested changes to the controller and returns the new
+        options. Raises UpdateFailed, leaving the options unchanged."""
+        hc = self._hc
+        options = dict(self.config_entry.options)
+        previous_key = previous_strategy_key(hc)
+        writer = coordinator.room_temp_writers.get(hc.key)
+        leaving = writer is not None and source != CURRENT_TEMP_SOURCE_ENTITY_WRITE
+        new_strategy = strategy
+
+        # Stopped first so that it can't overwrite the value reset below.
+        if leaving:
+            writer.async_stop()
+        try:
+            if source == CURRENT_TEMP_SOURCE_ENTITY_WRITE:
+                if strategy in CONTROL_STRATEGY_WRITABLE:
+                    await coordinator.async_write_value(
+                        hc.room_actual_temp_reg, temperature, refresh=False
+                    )
+            elif leaving and strategy in CONTROL_STRATEGY_WRITABLE:
+                await coordinator.async_write_value(
+                    hc.room_actual_temp_reg, 0, refresh=False
+                )
+
+            if room_influence and strategy == CONTROL_STRATEGY_WEATHER_COMPENSATED:
+                await coordinator.async_write_value(
+                    hc.control_strategy_reg,
+                    CONTROL_STRATEGY_ROOM_INFLUENCE,
+                    refresh=False,
+                )
+                new_strategy = CONTROL_STRATEGY_ROOM_INFLUENCE
+                options[previous_key] = strategy
+            elif (
+                room_influence is False and strategy == CONTROL_STRATEGY_ROOM_INFLUENCE
+            ):
+                await coordinator.async_write_value(
+                    hc.control_strategy_reg,
+                    CONTROL_STRATEGY_WEATHER_COMPENSATED,
+                    refresh=False,
+                )
+                new_strategy = CONTROL_STRATEGY_WEATHER_COMPENSATED
+        except UpdateFailed:
+            if leaving:
+                writer.async_start()
+            raise
+
+        if new_strategy != CONTROL_STRATEGY_ROOM_INFLUENCE:
+            options.pop(previous_key, None)
+        options[current_temp_source_key(hc)] = source
+        options.pop(current_temp_entity_key(hc), None)
+        if entity_id:
+            options[current_temp_entity_key(hc)] = entity_id
+        return options
+
+    def _format_temperature(self, temperature: float) -> str:
+        """The temperature with the decimal separator of the user's language."""
+        text = f"{temperature:.1f}"
+        return text.replace(".", ",") if self.hass.config.language == "de" else text
+
+    async def _async_strategy_name(self, strategy: int) -> str:
+        """The strategy's name in the user's language."""
+        translations = await async_get_translations(
+            self.hass, self.hass.config.language, "entity", {DOMAIN}
+        )
+        key = CONTROL_STRATEGY_MAP.get(strategy, CONTROL_STRATEGY_UNKNOWN)
+        return translations.get(
+            f"component.{DOMAIN}.entity.sensor.control_strategy.state.{key}", key
         )

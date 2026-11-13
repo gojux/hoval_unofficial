@@ -128,13 +128,62 @@ controls as follows:
 
 By default, a heating circuit's current room temperature isn't shown
 (only the target temperature). You can change this per circuit under
-the entry's three-dot menu → **Configure**:
+the entry's three-dot menu → **Configure** → the heating circuit. The form
+shows the circuit's current control strategy and room temperature register,
+and offers what fits them:
 
 - **Don't show a current temperature** (default)
-- **Read from Heat Pump** — uses the controller's own room sensor, if
-  one is installed for that circuit
-- **Use a Home Assistant entity** — pick any existing temperature sensor
-  (e.g. a separate smart thermostat in that room) to use instead
+- **Read the controller's room sensor** — preselected if the circuit has no
+  source configured yet and a sensor is detected. Without a sensor, no current
+  temperature is shown.
+- **Home Assistant entity, display in widget only** — pick any existing
+  temperature sensor (e.g. a separate smart thermostat in that room)
+- **Home Assistant entity, send to the controller** — additionally writes
+  the value to the controller. Only offered if no room sensor is connected to
+  the controller and its control strategy is "Weather-compensated" or
+  "Weather-compensated with room influence".
+
+Independently of the source, the **Include room sensor in control strategy**
+checkbox switches between these two control strategies: on means
+"Weather-compensated with room influence", off means "Weather-compensated".
+The controller only takes the room temperature into account when it's on.
+Saving with sending and the checkbox both on first shows the risks below and
+asks you to confirm them, every time; without room influence, the controller
+ignores the value. If the checkbox is on while no room sensor is detected and no
+value is being sent, the form also asks for confirmation, since that's only
+right with a sensor it can't detect, e.g. one retrofitted while values were
+being sent.
+
+> **Important:** For the room temperature to correct the flow temperature,
+> the parameter **Room temperature compensation (03-007)** must also be set
+> above 0 on the Hoval operating module (Service → WEZ → HC1/2/3 → Parameters;
+> requires service access, it can't be set via Modbus). The correction is this
+> value multiplied by the deviation of the room temperature: 1–3 is weak, 4–6
+> medium, 7–10 strong; for underfloor heating, Hoval recommends no more than 4.
+> With the default of 0, the controller still switches the heating circuit off
+> when the room is warmer than its setpoint, but doesn't correct the flow
+> temperature.
+
+While sending, the value is written on every change (at most once per
+minute) and at least every 10 minutes. Nothing is sent while the control
+strategy is anything other than these two.
+
+If the entity has no usable temperature for 5 minutes (unavailable, or
+outside 5–40 °C), or hasn't reported for 2 hours, the circuit's room setpoint
+is sent instead while room influence is on. With no deviation, the controller
+doesn't correct the flow temperature, as with "Weather-compensated". As soon
+as the entity is usable again, its temperature is sent again. After 30
+minutes, a repair issue appears.
+
+> **Note:** If Home Assistant itself is down, nothing is sent and the
+> controller keeps controlling the circuit with the last value it received.
+> A value that is too low raises the flow temperature; a value above the
+> setpoint can switch the heating circuit off.
+
+When you stop sending, the room temperature register is reset to 0; the
+control strategy only changes if you untick the checkbox. Removing the integration
+resets the register too, and restores the control strategy if the integration
+changed it.
 
 ## Using domestic hot water (water_heater entity)
 

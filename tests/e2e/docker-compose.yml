@@ -1,11 +1,11 @@
 services:
   modbus-sim:
     build: ./modbus-sim
-    expose:
-      - "502"
+    ports:
+      - "${MODBUS_SIM_PORT:-15020}:502"
 
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:2026.9.3
+    image: ghcr.io/home-assistant/home-assistant:2026.11.1
     ports:
       - "${HA_PORT:-8123}:8123"
     volumes:
