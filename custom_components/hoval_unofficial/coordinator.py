@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from functools import partial
 from datetime import timedelta
@@ -13,6 +14,8 @@ from typing import Any
 from homeassistant.components import modbus
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from modbus_connection import (
     ModbusConnectionError,
@@ -34,6 +37,9 @@ from .const import (
     STATUS_REGISTERS,
     HEATING_CIRCUIT_REGISTERS,
     SMART_GRID_REGISTERS,
+    SMART_GRID_MODE_MAP,
+    SMART_GRID_MODE_PREFERRED_OPERATION,
+    SMART_GRID_MODE_REGISTER,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,6 +73,10 @@ FAILED_ANSWER_ERRORS = (ModbusTimeoutError, ModbusDesyncError)
 REQUEST_ATTEMPTS = 3
 MAX_LOST_CONNECTIONS = 2
 RETRY_DELAY = 1.0  # seconds
+
+# A register the controller answered with an error code for is left out of
+# the block reads and tried again on its own at most this often.
+UNREADABLE_RETRY_SECONDS = 600
 
 
 @dataclass(frozen=True)
@@ -279,6 +289,28 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         # Heating circuit key -> cooling flow setpoint chosen by the user
         # (number.py), written when the circuit is set to cool (climate.py).
         self.cooling_flow_setpoints: dict[str, float] = {}
+        # FlowSetpointRaiseControl (raise_control.py) while the flow setpoint
+        # raise of heating circuit 1 is set up.
+        self.flow_setpoint_raise: Any = None
+        # Heating circuit key -> ConstantFlowControl (constant_control.py),
+        # for the circuits on constant control while it is turned on.
+        self.constant_controls: dict[str, Any] = {}
+        # Unique IDs of the entities the platforms created on this start; the
+        # disabled entities of this entry not among them are removed.
+        self.provided_unique_ids: set[str] = set()
+        # Key of each register the controller answered with an error code
+        # for -> time.monotonic() of the last attempt to read it.
+        self._unreadable: dict[str, float] = {}
+
+    def add_entities(
+        self, async_add_entities: AddEntitiesCallback, entities: Iterable[Entity]
+    ) -> None:
+        """Adds a platform's entities and remembers that they are provided."""
+        entities = list(entities)
+        self.provided_unique_ids.update(
+            entity.unique_id for entity in entities if entity.unique_id
+        )
+        async_add_entities(entities)
 
     async def _async_update_data(self) -> dict[str, float]:
         data: dict[str, float] = {}
@@ -305,55 +337,73 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
             else ALL_REGISTERS
         )
 
-        for block in build_read_blocks(registers_to_poll):
-            try:
+        now = time.monotonic()
+        readable = [reg for reg in registers_to_poll if reg.key not in self._unreadable]
+        retry = [
+            reg
+            for reg in registers_to_poll
+            if reg.key in self._unreadable
+            and now - self._unreadable[reg.key] >= UNREADABLE_RETRY_SECONDS
+        ]
+
+        try:
+            for block in build_read_blocks(readable):
                 try:
                     registers = await read_registers(
                         self.unit, block.register_type, block.address, block.count
                     )
                 except ModbusExceptionError as err:
                     # The controller answered with an error code, e.g. for a
-                    # register it doesn't have.
-                    if len(block.registers) == 1:
-                        self._warn_unreadable(block.registers[0], err)
-                        continue
-                    # Read the registers one by one so a single unreadable
-                    # register doesn't hide the others in the block.
-                    _LOGGER.debug(
-                        "Block read at address %s (%s registers) failed: %s",
-                        block.address,
-                        block.count,
-                        err,
-                    )
+                    # register it doesn't have. Read the registers one by one
+                    # so a single unreadable register doesn't hide the others
+                    # in the block.
+                    if len(block.registers) > 1:
+                        _LOGGER.debug(
+                            "Block read at address %s (%s registers) failed: %s",
+                            block.address,
+                            block.count,
+                            err,
+                        )
                     for reg in block.registers:
-                        try:
-                            single = await read_registers(
-                                self.unit,
-                                reg.register_type,
-                                reg.address,
-                                reg.register_count,
-                            )
-                        except ModbusExceptionError as single_err:
-                            self._warn_unreadable(reg, single_err)
-                            continue
-                        self._store_value(data, reg, single)
+                        await self._async_read_single(data, reg)
                     continue
-            except ModbusError as err:
-                raise UpdateFailed(
-                    f"Modbus error while reading address {block.address}: {err}"
-                ) from err
 
-            for reg in block.registers:
-                offset = reg.address - block.address
-                self._store_value(
-                    data, reg, registers[offset : offset + reg.register_count]
-                )
+                for reg in block.registers:
+                    offset = reg.address - block.address
+                    self._store_value(
+                        data, reg, registers[offset : offset + reg.register_count]
+                    )
+
+            for reg in retry:
+                await self._async_read_single(data, reg)
+        except ModbusError as err:
+            raise UpdateFailed(f"Modbus error while polling: {err}") from err
 
         return data
 
-    @staticmethod
-    def _warn_unreadable(reg: RegisterDef, err: ModbusExceptionError) -> None:
-        _LOGGER.warning("Error reading %s (address %s): %s", reg.key, reg.address, err)
+    async def _async_read_single(self, data: dict[str, float], reg: RegisterDef) -> None:
+        """Reads one register and keeps track of whether it is readable.
+        Raises ModbusError on errors other than an error code."""
+        try:
+            registers = await read_registers(
+                self.unit, reg.register_type, reg.address, reg.register_count
+            )
+        except ModbusExceptionError as err:
+            if reg.key not in self._unreadable:
+                _LOGGER.warning(
+                    "Error reading %s (address %s): %s; trying again every %s s",
+                    reg.key,
+                    reg.address,
+                    err,
+                    UNREADABLE_RETRY_SECONDS,
+                )
+            else:
+                _LOGGER.debug("%s still unreadable: %s", reg.key, err)
+            self._unreadable[reg.key] = time.monotonic()
+            return
+        if self._unreadable.pop(reg.key, None) is not None:
+            _LOGGER.info("%s (address %s) is readable again", reg.key, reg.address)
+        self._store_value(data, reg, registers)
 
     @staticmethod
     def _store_value(data: dict[str, float], reg: RegisterDef, registers: list[int]) -> None:
@@ -363,6 +413,30 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         """Reads a register directly, independent of what is being polled."""
         try:
             return await read_register(self.unit, reg)
+        except ModbusError as err:
+            raise UpdateFailed(f"Modbus error while reading {reg.key}: {err}") from err
+
+    async def async_smart_grid_offset(self, offset_reg: RegisterDef) -> float:
+        """The Smart Grid offset the controller currently adds to a base
+        setpoint, read right away: the register's value while Smart Grid is
+        in preferred operation, otherwise 0."""
+        raw_mode = await self.async_read_value_if_present(SMART_GRID_MODE_REGISTER)
+        if (
+            raw_mode is None
+            or SMART_GRID_MODE_MAP.get(int(raw_mode))
+            != SMART_GRID_MODE_PREFERRED_OPERATION
+        ):
+            return 0.0
+        offset = await self.async_read_value_if_present(offset_reg)
+        return offset if offset is not None else 0.0
+
+    async def async_read_value_if_present(self, reg: RegisterDef) -> float | None:
+        """Reads a register directly; None if the controller answers that it
+        doesn't have it. Raises UpdateFailed on other errors."""
+        try:
+            return await read_register(self.unit, reg)
+        except ModbusExceptionError:
+            return None
         except ModbusError as err:
             raise UpdateFailed(f"Modbus error while reading {reg.key}: {err}") from err
 

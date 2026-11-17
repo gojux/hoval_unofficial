@@ -53,6 +53,27 @@
     "number": {
       "cooling_flow_setpoint": {
         "default": "mdi:snowflake-thermometer"
+      },
+      "constant_heating_flow": {
+        "default": "mdi:thermometer-chevron-up"
+      },
+      "constant_cooling_flow": {
+        "default": "mdi:snowflake-thermometer"
+      }
+    },
+    "switch": {
+      "flow_setpoint_raise_auto_hc1": {
+        "default": "mdi:thermometer-auto"
+      }
+    },
+    "select": {
+      "constant_mode": {
+        "default": "mdi:hvac",
+        "state": {
+          "heat": "mdi:fire",
+          "off": "mdi:power",
+          "cool": "mdi:snowflake"
+        }
       }
     }
   }

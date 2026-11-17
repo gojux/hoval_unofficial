@@ -34,13 +34,16 @@ from modbus_connection import ModbusError, ModbusTcpParams, ModbusUnit
 
 from .const import (
     CONF_DEVICE_ID,
-    CONTROL_STRATEGY_ROOM_INFLUENCE,
     CONTROL_STRATEGY_WRITABLE,
     CURRENT_TEMP_SOURCE_ENTITY_WRITE,
     DOMAIN,
+    FLOW_SETPOINT_RAISE_REGISTERS,
     HEATING_CIRCUITS,
+    WITH_INFLUENCE_TO_WITHOUT,
     HeatingCircuit,
+    RegisterDef,
     current_temp_source_key,
+    flow_setpoint_raise_previous_key,
     previous_strategy_key,
 )
 from .coordinator import HovalModbusCoordinator, read_register, write_register
@@ -161,6 +164,8 @@ class RoomTempWriter:
             unsubscribe()
         self._unsubscribers = []
         self._cancel_deferred()
+        # Only cancels the timers and the issue; the source didn't recover.
+        self.fallback_active = False
         self._source_usable()
 
     @callback
@@ -261,7 +266,7 @@ class RoomTempWriter:
                     return
                 self.blocked_strategy = None
                 # Without room influence the value has no effect anyway.
-                if fallback and strategy != CONTROL_STRATEGY_ROOM_INFLUENCE:
+                if fallback and strategy not in WITH_INFLUENCE_TO_WITHOUT:
                     return
                 await self._coordinator.async_write_value(
                     self._hc.room_actual_temp_reg, value, refresh=False
@@ -371,7 +376,15 @@ async def async_cleanup_removed_entry(hass: HomeAssistant, entry: ConfigEntry) -
         == CURRENT_TEMP_SOURCE_ENTITY_WRITE
         or previous_strategy_key(hc) in entry.options
     ]
-    if not circuits:
+    options = entry.options
+    previous_raises = [
+        (reg, options[flow_setpoint_raise_previous_key(hc)])
+        for hc, reg in zip(HEATING_CIRCUITS, FLOW_SETPOINT_RAISE_REGISTERS)
+        if flow_setpoint_raise_previous_key(hc) in options
+    ]
+    # Cooling and constant control are left as they are, e.g. for another
+    # system taking over the heat pump.
+    if not circuits and not previous_raises:
         return
 
     params = ModbusTcpParams(host=entry.data[CONF_HOST], port=entry.data[CONF_PORT])
@@ -383,6 +396,8 @@ async def async_cleanup_removed_entry(hass: HomeAssistant, entry: ConfigEntry) -
                 try:
                     for hc in circuits:
                         await _async_release_circuit(unit, entry, hc)
+                    for reg, previous in previous_raises:
+                        await _async_restore_raise(unit, reg, previous)
                     return
                 except ModbusError as err:
                     if attempt == REMOVE_ATTEMPTS:
@@ -391,8 +406,21 @@ async def async_cleanup_removed_entry(hass: HomeAssistant, entry: ConfigEntry) -
                     await asyncio.sleep(REMOVE_RETRY_SECONDS)
     except (ModbusError, HomeAssistantError) as err:
         _LOGGER.warning(
-            "Could not reset the room temperature settings on the controller: %s",
+            "Could not reset the settings changed on the controller: %s",
             err,
+        )
+
+
+async def _async_restore_raise(
+    unit: ModbusUnit, reg: RegisterDef, previous: float
+) -> None:
+    """Writes back a circuit's flow setpoint raise from before the
+    integration provided it and checks that the controller reports it."""
+    await write_register(unit, reg, previous)
+    reported = await read_register(unit, reg)
+    if abs(reported - previous) >= reg.scale / 2:
+        _LOGGER.warning(
+            "%s reads %s K after restoring %s K", reg.key, reported, previous
         )
 
 
@@ -408,5 +436,5 @@ async def _async_release_circuit(
     ):
         await write_register(unit, hc.room_actual_temp_reg, 0)
     previous = entry.options.get(previous_strategy_key(hc))
-    if previous is not None and strategy == CONTROL_STRATEGY_ROOM_INFLUENCE:
+    if previous is not None and strategy in WITH_INFLUENCE_TO_WITHOUT:
         await write_register(unit, hc.control_strategy_reg, previous)

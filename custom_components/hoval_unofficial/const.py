@@ -19,6 +19,8 @@ DEFAULT_DEVICE_ID = 1
 # The Hoval gateway stops answering on a connection that has been idle for
 # about 20-30 seconds; a shorter interval keeps the connection alive.
 DEFAULT_SCAN_INTERVAL = 20  # seconds
+MIN_SCAN_INTERVAL = 5
+MAX_SCAN_INTERVAL = 300
 # Modbus request timeout, in seconds. A short timeout lets the retries
 # (coordinator.py) get past a dead connection quickly; the gateway answers
 # well within it.
@@ -55,6 +57,14 @@ class RegisterDef:
     def register_count(self) -> int:
         """Number of 16-bit registers this value occupies."""
         return 2 if self.data_type in ("int32", "uint32", "float32") else 1
+
+    def clamp(self, value: float) -> float:
+        """Limits a value to the register's range, where it has one."""
+        if self.min_value is not None:
+            value = max(value, self.min_value)
+        if self.max_value is not None:
+            value = min(value, self.max_value)
+        return value
 
 
 # --------------------------------------------------------------------------
@@ -215,6 +225,43 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         precision=0,
         unit="%",
     ),
+    # --- Heating circuits 2 and 3, the same as heating circuit 1 ---
+    *(
+        reg
+        for circuit, flow, target, mixer in (
+            (2, 1514, 19563, 19659),
+            (3, 1515, 19564, 19660),
+        )
+        for reg in (
+            RegisterDef(
+                key=f"flow_temp_hc{circuit}",
+                name=f"Current flow temperature HC{circuit}",
+                address=flow,
+                data_type="int16",
+                scale=0.1,
+                unit="°C",
+                device_class="temperature",
+            ),
+            RegisterDef(
+                key=f"supply_target_temp_hc{circuit}",
+                name=f"Supply target temperature HC{circuit}",
+                address=target,
+                data_type="int16",
+                scale=0.1,
+                precision=1,
+                unit="°C",
+                device_class="temperature",
+            ),
+            RegisterDef(
+                key=f"mixing_valve_hc{circuit}",
+                name=f"Mixing valve HC{circuit}",
+                address=mixer,
+                data_type="int16",
+                precision=0,
+                unit="%",
+            ),
+        )
+    ),
 
     # --- Cumulative energy meters ---
     RegisterDef(
@@ -322,6 +369,9 @@ SENSOR_REGISTERS: list[RegisterDef] = [
     ),
 ]
 
+# The buffer sensor (WPF); 0 without one.
+BUFFER_SENSOR_REGISTER = next(reg for reg in SENSOR_REGISTERS if reg.key == "buffer_temp")
+
 # Writable registers (e.g. setpoints) beyond the DHW/heating-circuit
 # setpoints already handled by water_heater.py/climate.py, exposed as
 # "number" entities. Assembled at the end of this file, once the Smart Grid
@@ -331,8 +381,7 @@ NUMBER_REGISTERS: list[RegisterDef] = []
 # --------------------------------------------------------------------------
 # DHW (Domestic Hot Water) REGISTERS
 #
-# Used by the "water_heater" entity in water_heater.py. Again placeholder
-# addresses -- adjust to your heat pump's actual Modbus map.
+# Used by the "water_heater" entity in water_heater.py.
 # --------------------------------------------------------------------------
 
 DHW_CURRENT_TEMP_REGISTER = RegisterDef(
@@ -602,11 +651,24 @@ CONTROL_STRATEGY_UNKNOWN = "unknown"
 
 CONTROL_STRATEGY_WEATHER_COMPENSATED = 0
 CONTROL_STRATEGY_ROOM_INFLUENCE = 1
+# The strategy pairs without and with room influence: weather-compensated
+# (0 <-> 1) and weather-compensated heating + constant cooling (4 <-> 5).
+# Switching room influence on or off moves within a pair. The keys of each
+# dict are the strategies it starts from: `strategy in
+# WITH_INFLUENCE_TO_WITHOUT` means room influence is on.
+WITHOUT_INFLUENCE_TO_WITH: dict[int, int] = {
+    CONTROL_STRATEGY_WEATHER_COMPENSATED: CONTROL_STRATEGY_ROOM_INFLUENCE,
+    4: 5,
+}
+WITH_INFLUENCE_TO_WITHOUT: dict[int, int] = {
+    with_influence: without
+    for without, with_influence in WITHOUT_INFLUENCE_TO_WITH.items()
+}
 # The only strategies the integration may write, and the only ones under
 # which it sends a room temperature to the controller.
 CONTROL_STRATEGY_WRITABLE: tuple[int, ...] = (
-    CONTROL_STRATEGY_WEATHER_COMPENSATED,
-    CONTROL_STRATEGY_ROOM_INFLUENCE,
+    *WITHOUT_INFLUENCE_TO_WITH,
+    *WITH_INFLUENCE_TO_WITHOUT,
 )
 # Strategies with constant flow cooling; only these offer cooling.
 CONTROL_STRATEGIES_COOLING: tuple[int, ...] = (4, 5)
@@ -683,35 +745,35 @@ class HeatingCircuit:
     read_setpoint_reg: RegisterDef
     write_normal_setpoint_reg: RegisterDef
     write_eco_setpoint_reg: RegisterDef
-    enabled_default: bool = True
-    # Register for the physical room temperature sensor of this circuit, if
-    # one is wired up. Read via CURRENT_TEMP_SOURCE_MODBUS (see climate.py) --
-    # None means the circuit has no such sensor (or its address isn't known
-    # yet), in which case selecting that source simply yields no value.
-    room_actual_temp_reg: RegisterDef | None = None
+    # Register for the physical room temperature sensor of this circuit. Read
+    # via CURRENT_TEMP_SOURCE_MODBUS (see climate.py); without a sensor wired
+    # up it yields no usable value.
+    room_actual_temp_reg: RegisterDef
     # This circuit's Smart Grid offset register (see
     # SMART_GRID_OFFSET_HC1_REGISTER above) -- used by climate.py to
     # compensate target_temperature writes for an active offset, the same
     # way HovalWaterHeater does for DHW.
-    smart_grid_offset_reg: RegisterDef | None = None
+    smart_grid_offset_reg: RegisterDef
     # This circuit's control strategy register (see
     # CONTROL_STRATEGY_HC1_REGISTER above), read by the diagnostic
     # control strategy sensor in sensor.py and by room_temp.py.
-    control_strategy_reg: RegisterDef | None = None
+    control_strategy_reg: RegisterDef
     # This circuit's control status (see HEATING_CIRCUIT_STATUS_MAP), read
     # by the diagnostic heating circuit status sensor in sensor.py.
-    status_reg: RegisterDef | None = None
+    status_reg: RegisterDef
     # Constant flow setpoint for cooling; 0 means not cooling. Writing a
-    # temperature turns cooling on (see climate.py). None means cooling isn't
-    # supported for this circuit.
-    cooling_flow_setpoint_reg: RegisterDef | None = None
+    # temperature turns cooling on (see climate.py).
+    cooling_flow_setpoint_reg: RegisterDef
     # Minimum cooling flow temperature, set by the installer.
-    cooling_flow_min_reg: RegisterDef | None = None
+    cooling_flow_min_reg: RegisterDef
     # Constant flow setpoint for heating. With a cooling strategy (4/5) it
     # must be 0 for the circuit to cool; heating then stays weather
     # compensated and doesn't use it, so it is set to 0 when cooling starts
-    # and left there.
-    heating_constant_flow_reg: RegisterDef | None = None
+    # and left there. With constant control (strategy 3) it is the flow
+    # temperature the circuit heats with (see constant_control.py).
+    heating_constant_flow_reg: RegisterDef
+    # Highest flow temperature of the circuit, set by the installer.
+    flow_max_reg: RegisterDef
 
 
 HEATING_CIRCUIT_1 = HeatingCircuit(
@@ -779,7 +841,12 @@ HEATING_CIRCUIT_1 = HeatingCircuit(
         address=1490,
         scale=0.1,
     ),
-    enabled_default=True,
+    flow_max_reg=RegisterDef(
+        key="flow_max_hc1",
+        name="Maximum flow temperature HC1",
+        address=30690,
+        scale=0.1,
+    ),
 )
 HEATING_CIRCUIT_2 = HeatingCircuit(
     key="heating_circuit_2",
@@ -846,7 +913,12 @@ HEATING_CIRCUIT_2 = HeatingCircuit(
         address=1491,
         scale=0.1,
     ),
-    enabled_default=False,
+    flow_max_reg=RegisterDef(
+        key="flow_max_hc2",
+        name="Maximum flow temperature HC2",
+        address=30691,
+        scale=0.1,
+    ),
 )
 HEATING_CIRCUIT_3 = HeatingCircuit(
     key="heating_circuit_3",
@@ -913,10 +985,31 @@ HEATING_CIRCUIT_3 = HeatingCircuit(
         address=1492,
         scale=0.1,
     ),
-    enabled_default=False,
+    flow_max_reg=RegisterDef(
+        key="flow_max_hc3",
+        name="Maximum flow temperature HC3",
+        address=30692,
+        scale=0.1,
+    ),
 )
 
 HEATING_CIRCUITS = [HEATING_CIRCUIT_1, HEATING_CIRCUIT_2, HEATING_CIRCUIT_3]
+
+# Sensor registers of each heating circuit, only created for circuits that
+# are present (see circuit_present).
+CIRCUIT_SENSOR_KEYS: dict[str, tuple[str, ...]] = {
+    hc.key: (
+        f"flow_temp_hc{number}",
+        f"supply_target_temp_hc{number}",
+        f"mixing_valve_hc{number}",
+    )
+    for number, hc in enumerate(HEATING_CIRCUITS, start=1)
+}
+# The register telling whether a heating circuit is there: its flow
+# temperature, 0 without a circuit.
+CIRCUIT_FLOW_TEMP_KEYS: dict[str, str] = {
+    hc.key: f"flow_temp_hc{number}" for number, hc in enumerate(HEATING_CIRCUITS, start=1)
+}
 
 HEATING_CIRCUIT_REGISTERS = [
     reg
@@ -928,15 +1021,15 @@ HEATING_CIRCUIT_REGISTERS = [
         hc.write_eco_setpoint_reg,
     )
 ] + [
-    hc.room_actual_temp_reg for hc in HEATING_CIRCUITS if hc.room_actual_temp_reg is not None
-] + [
-    hc.control_strategy_reg for hc in HEATING_CIRCUITS if hc.control_strategy_reg is not None
-] + [
-    hc.status_reg for hc in HEATING_CIRCUITS if hc.status_reg is not None
-] + [
-    hc.cooling_flow_setpoint_reg
+    reg
     for hc in HEATING_CIRCUITS
-    if hc.cooling_flow_setpoint_reg is not None
+    for reg in (
+        hc.room_actual_temp_reg,
+        hc.control_strategy_reg,
+        hc.status_reg,
+        hc.cooling_flow_setpoint_reg,
+        hc.heating_constant_flow_reg,
+    )
 ]
 
 # --------------------------------------------------------------------------
@@ -972,6 +1065,33 @@ def current_temp_entity_key(hc: HeatingCircuit) -> str:
     return f"{hc.key}_current_temp_entity_id"
 
 
+# Whether heating circuits 2/3 and domestic hot water are there, set under
+# Options -> General (heating circuit 1 always is). Without them, the
+# integration neither creates their entities nor reads or writes their
+# registers. Detected when the entry is created, and on the first start
+# without the option.
+CONF_DHW_PRESENT = "dhw_present"
+
+
+def circuit_present_key(hc: HeatingCircuit) -> str:
+    """Options storage key for whether the circuit is there."""
+    return f"{hc.key}_present"
+
+
+def circuit_present(options: Mapping[str, Any], hc: HeatingCircuit) -> bool:
+    """Whether the circuit is there; heating circuit 1 always is."""
+    return hc is HEATING_CIRCUIT_1 or bool(options.get(circuit_present_key(hc)))
+
+
+def present_circuits(options: Mapping[str, Any]) -> list[HeatingCircuit]:
+    return [hc for hc in HEATING_CIRCUITS if circuit_present(options, hc)]
+
+
+def dhw_present(options: Mapping[str, Any]) -> bool:
+    """Whether domestic hot water is there."""
+    return bool(options.get(CONF_DHW_PRESENT, True))
+
+
 def cooling_supported_key(hc: HeatingCircuit) -> str:
     """Options storage key for whether the circuit can cool, read from its
     control strategy when the integration is set up or the circuit is saved
@@ -991,10 +1111,192 @@ def cooling_flow_range(hc: HeatingCircuit, options: Mapping[str, Any]) -> tuple[
     return minimum, max(COOLING_FLOW_MAX, minimum)
 
 
+def control_strategy_key(hc: HeatingCircuit) -> str:
+    """Options storage key for the circuit's control strategy, read together
+    with cooling_supported_key."""
+    return f"{hc.key}_control_strategy"
+
+
+def constant_control_key(hc: HeatingCircuit) -> str:
+    """Options storage key for whether the circuit runs on constant control
+    (strategy 3), read together with cooling_supported_key."""
+    return f"{hc.key}_constant_control"
+
+
+def flow_max_key(hc: HeatingCircuit) -> str:
+    """Options storage key for the circuit's highest flow temperature, read
+    together with cooling_supported_key."""
+    return f"{hc.key}_flow_max"
+
+
 def previous_strategy_key(hc: HeatingCircuit) -> str:
     """Options-flow storage key for the control strategy to restore, set only
     while the integration itself has changed the circuit's strategy."""
     return f"{hc.key}_previous_control_strategy"
+
+
+# Experimental functions, each turned on under Options -> Experimental
+# functions before it can be set up.
+CONF_EXPERIMENTAL_FLOW_SETPOINT_RAISE = "experimental_flow_setpoint_raise"
+# Range of a circuit's flow setpoint raise, set in the circuit's options: the
+# range of its number entity and of the automatic adjustment.
+DEFAULT_FLOW_SETPOINT_RAISE_MIN = 0.0
+DEFAULT_FLOW_SETPOINT_RAISE_MAX = 3.0
+# Whether the heat pump has a buffer sensor (WPF, 27493 reads 0 without one),
+# read when the integration starts (if not stored yet) and whenever the
+# experimental functions are opened. The raise suggestion needs it.
+CONF_BUFFER_SENSOR = "buffer_sensor"
+
+
+# Room influence: switching it on/off per heating circuit (strategy 0 <-> 1,
+# 4 <-> 5) and sending a Home Assistant temperature to the controller.
+# Without it, the integration writes neither, and strategies 1 and 5 are
+# handled like 0 and 4.
+CONF_EXPERIMENTAL_ROOM_INFLUENCE = "experimental_room_influence"
+
+
+def room_influence_enabled(options: Mapping[str, Any]) -> bool:
+    """Whether room influence is turned on (experimental function)."""
+    return bool(options.get(CONF_EXPERIMENTAL_ROOM_INFLUENCE))
+
+
+# Constant control (strategy 3): a circuit on it gets a select for heating /
+# off / cooling and a number entity per flow setpoint (see
+# constant_control.py). Without it, such a circuit gets no climate entity,
+# since none of its controls would have an effect.
+CONF_EXPERIMENTAL_CONSTANT_CONTROL = "experimental_constant_control"
+# Cooling: the Cool mode and cooling flow setpoint of circuits on strategy 4
+# or 5, and cooling with constant control. Without it, strategies 4 and 5 are
+# handled like 0 and 1 and the cooling flow setpoints are never written.
+CONF_EXPERIMENTAL_COOLING = "experimental_cooling"
+CONTROL_STRATEGY_CONSTANT = 3
+CONSTANT_HEATING_MIN = 20.0
+# Used when the circuit's highest flow temperature can't be read.
+CONSTANT_HEATING_MAX_FALLBACK = 50.0
+CONSTANT_HEATING_DEFAULT = 35.0
+# Kept well above the dew point.
+CONSTANT_COOLING_DEFAULT = 20.0
+CONSTANT_MODE_HEAT = "heat"
+CONSTANT_MODE_OFF = "off"
+CONSTANT_MODE_COOL = "cool"
+
+
+def on_constant_control(options: Mapping[str, Any], hc: HeatingCircuit) -> bool:
+    """Whether the circuit runs on constant control (strategy 3), as read
+    when the integration started or the circuit was last saved."""
+    return bool(options.get(constant_control_key(hc)))
+
+
+def constant_control_enabled(options: Mapping[str, Any], hc: HeatingCircuit) -> bool:
+    """Whether the circuit gets the entities for constant control."""
+    return bool(
+        options.get(CONF_EXPERIMENTAL_CONSTANT_CONTROL) and on_constant_control(options, hc)
+    )
+
+
+# Always created, since the controller can also cool without the integration;
+# enabled once cooling is turned on.
+COOLING_SENSOR_KEYS: tuple[str, ...] = ("current_cooling_power", "cooling_energy")
+
+
+def cooling_enabled(options: Mapping[str, Any]) -> bool:
+    """Whether cooling is turned on (experimental function)."""
+    return bool(options.get(CONF_EXPERIMENTAL_COOLING))
+
+
+def constant_heating_range(
+    hc: HeatingCircuit, options: Mapping[str, Any]
+) -> tuple[float, float]:
+    """The constant heating flow setpoint range offered for a circuit: up to
+    its highest flow temperature."""
+    maximum = options.get(flow_max_key(hc)) or 0
+    if maximum <= CONSTANT_HEATING_MIN:
+        maximum = CONSTANT_HEATING_MAX_FALLBACK
+    return CONSTANT_HEATING_MIN, maximum
+
+
+# Control strategies the flow setpoint raise is offered for: weather
+# compensated, with or without room influence.
+FLOW_SETPOINT_RAISE_STRATEGIES: tuple[int, ...] = (0, 1)
+
+# Buffer temperature of the buffer modules (PS) a heat pump can have, by
+# UnitId (datapoint 15 "Puffer PF/KPF2 Ist"). A plausible value means the
+# module exists: then the flow setpoint raise isn't offered (Hoval), and the
+# module's Smart Grid offsets are.
+BUFFER_MODULE_TEMP_REGISTERS: dict[int, RegisterDef] = {
+    unit_id: RegisterDef(
+        key=f"buffer_module_temp_{unit_id}",
+        name=f"Buffer module {unit_id} temperature",
+        address=address,
+        scale=0.1,
+    )
+    for unit_id, address in ((142, 17324), (143, 17386))
+}
+BUFFER_MODULE_TEMP_RANGE = (-20.0, 110.0)
+# Options storage key for whether any buffer module was found, read when the
+# integration starts (if not stored yet) and whenever the experimental
+# functions are opened; buffer_module_key() for each module.
+CONF_BUFFER_MODULE = "buffer_module"
+
+
+def buffer_module_key(unit_id: int) -> str:
+    """Options storage key for whether the buffer module was found."""
+    return f"buffer_module_{unit_id}"
+
+
+def buffer_module_temp_plausible(value: float | None) -> bool:
+    """Whether a buffer module temperature register shows a module: a value
+    other than 0 within a plausible range."""
+    return (
+        value is not None
+        and value != 0
+        and BUFFER_MODULE_TEMP_RANGE[0] <= value <= BUFFER_MODULE_TEMP_RANGE[1]
+    )
+
+
+def flow_setpoint_raise_offered(options: Mapping[str, Any], hc: HeatingCircuit) -> bool:
+    """Whether the flow setpoint raise is offered for a circuit: the
+    experimental function is on, the heat pump has no buffer module, and the
+    circuit's control strategy is 0 or 1."""
+    return bool(
+        options.get(CONF_EXPERIMENTAL_FLOW_SETPOINT_RAISE)
+        and not options.get(CONF_BUFFER_MODULE)
+        and circuit_present(options, hc)
+        and options.get(control_strategy_key(hc)) in FLOW_SETPOINT_RAISE_STRATEGIES
+    )
+
+
+def flow_setpoint_raise_previous_key(hc: HeatingCircuit) -> str:
+    """Options storage key for the circuit's raise found on the controller
+    when the raise became available for it. Written back once it no longer
+    is, or when the entry is removed, and then dropped."""
+    return f"{hc.key}_previous_flow_setpoint_raise"
+
+
+def flow_setpoint_raise_bound_keys(hc: HeatingCircuit) -> tuple[str, str]:
+    """Options storage keys for the lowest and highest raise of a circuit."""
+    return f"{hc.key}_flow_setpoint_raise_min", f"{hc.key}_flow_setpoint_raise_max"
+
+
+def flow_setpoint_raise_bounds(
+    options: Mapping[str, Any], hc: HeatingCircuit
+) -> tuple[float, float]:
+    """The lowest and highest raise of a circuit."""
+    min_key, max_key = flow_setpoint_raise_bound_keys(hc)
+    return (
+        options.get(min_key, DEFAULT_FLOW_SETPOINT_RAISE_MIN),
+        options.get(max_key, DEFAULT_FLOW_SETPOINT_RAISE_MAX),
+    )
+
+
+def flow_setpoint_raise_learning(options: Mapping[str, Any]) -> bool:
+    """Whether heating circuit 1's raise comes with a suggestion and an
+    automatic adjustment: it is offered and the heat pump has a buffer
+    sensor."""
+    return bool(
+        flow_setpoint_raise_offered(options, HEATING_CIRCUIT_1)
+        and options.get(CONF_BUFFER_SENSOR)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1002,8 +1304,8 @@ def previous_strategy_key(hc: HeatingCircuit) -> str:
 #
 # Raw numeric status code from the controller, translated into German status
 # text via HEAT_PUMP_STATUS_MAP. Used by the dedicated "status" sensor
-# (device_class ENUM) in sensor.py. Placeholder address -- adjust to your
-# Modbus map.
+# (device_class ENUM) in sensor.py. Address 1539 ("WEZ-Status") is checked
+# against the data point list, see REGISTERS.md.
 # --------------------------------------------------------------------------
 
 HEAT_PUMP_STATUS_REGISTER = RegisterDef(
@@ -1226,6 +1528,33 @@ SMART_GRID_OFFSET_DHW_REGISTER = RegisterDef(
     step=0.5,
     enabled_default=False,
 )
+SMART_GRID_OFFSET_BUFFER_142_HEATING_REGISTER = RegisterDef(
+    key="smart_grid_offset_buffer_142_heating",
+    name="Smart Grid Offset Buffer module 142 (Heating)",
+    address=28837,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=0,
+    max_value=90,
+    step=0.5,
+    enabled_default=False,
+)
+SMART_GRID_OFFSET_BUFFER_142_COOLING_REGISTER = RegisterDef(
+    key="smart_grid_offset_buffer_142_cooling",
+    name="Smart Grid Offset Buffer module 142 (Cooling)",
+    address=28838,
+    data_type="int16",
+    scale=0.1,
+    unit="K",
+    writable=True,
+    min_value=-30,
+    max_value=0,
+    step=0.5,
+    enabled_default=False,
+)
+# Buffer module 143's offsets keep their original keys.
 SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER = RegisterDef(
     key="smart_grid_offset_buffer_heating",
     name="Smart Grid Offset Buffer (Heating)",
@@ -1285,7 +1614,34 @@ NUMBER_REGISTERS.extend(
         SMART_GRID_OFFSET_COOLING_HC2_REGISTER,
         SMART_GRID_OFFSET_COOLING_HC3_REGISTER,
         SMART_GRID_OFFSET_DHW_REGISTER,
+        SMART_GRID_OFFSET_BUFFER_142_HEATING_REGISTER,
+        SMART_GRID_OFFSET_BUFFER_142_COOLING_REGISTER,
         SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER,
         SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER,
     ]
 )
+
+# Smart Grid offsets only offered where they can have an effect: each buffer
+# module's while it is found, each circuit's cooling offset at a strategy
+# with cooling or constant control.
+SMART_GRID_BUFFER_OFFSET_REGISTERS: dict[int, tuple[RegisterDef, RegisterDef]] = {
+    142: (
+        SMART_GRID_OFFSET_BUFFER_142_HEATING_REGISTER,
+        SMART_GRID_OFFSET_BUFFER_142_COOLING_REGISTER,
+    ),
+    143: (
+        SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER,
+        SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER,
+    ),
+}
+SMART_GRID_COOLING_OFFSET_REGISTERS: dict[str, RegisterDef] = {
+    HEATING_CIRCUIT_1.key: SMART_GRID_OFFSET_COOLING_HC1_REGISTER,
+    HEATING_CIRCUIT_2.key: SMART_GRID_OFFSET_COOLING_HC2_REGISTER,
+    HEATING_CIRCUIT_3.key: SMART_GRID_OFFSET_COOLING_HC3_REGISTER,
+}
+SMART_GRID_COOLING_OFFSET_STRATEGIES: tuple[int, ...] = (3, 4, 5)
+SMART_GRID_HEATING_OFFSET_REGISTERS: dict[str, RegisterDef] = {
+    HEATING_CIRCUIT_1.key: SMART_GRID_OFFSET_HC1_REGISTER,
+    HEATING_CIRCUIT_2.key: SMART_GRID_OFFSET_HC2_REGISTER,
+    HEATING_CIRCUIT_3.key: SMART_GRID_OFFSET_HC3_REGISTER,
+}

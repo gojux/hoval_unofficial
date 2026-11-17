@@ -14,28 +14,30 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_TEMPERATURE,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
     UnitOfTemperature,
 )
-from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.core import (
+    Event,
+    EventStateChangedData,
+    HomeAssistant,
+    State,
+    callback,
+)
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
     HeatingCircuit,
-    HEATING_CIRCUITS,
     CLIMATE_MODE_TO_HVAC,
     CLIMATE_MODE_TO_PRESET,
     CLIMATE_PRESET_OPTIONS,
     CLIMATE_PRESET_WEEK1,
     CONTROL_STRATEGIES_COOLING,
-    CLIMATE_MODE_CONSTANT,
     COOLING_FLOW_DEFAULT,
     CURRENT_TEMP_SOURCE_ENTITY,
     CURRENT_TEMP_SOURCE_ENTITY_WRITE,
@@ -45,16 +47,16 @@ from .const import (
     HVAC_TO_CLIMATE_MODE,
     PRESET_TO_CLIMATE_MODE,
     RegisterDef,
-    SMART_GRID_MODE_MAP,
-    SMART_GRID_MODE_PREFERRED_OPERATION,
-    SMART_GRID_MODE_REGISTER,
     cooling_flow_range,
+    cooling_enabled,
     cooling_supported_key,
+    on_constant_control,
+    present_circuits,
     current_temp_entity_key,
     current_temp_source_key,
 )
 from .coordinator import HovalModbusCoordinator
-from .room_temp import has_room_sensor
+from .room_temp import has_room_sensor, parse_room_temperature
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,11 +101,15 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: HovalModbusCoordinator = hass.data[DOMAIN][entry.entry_id]
+    # A circuit on constant control has none of the modes and room setpoints
+    # of a climate entity; it gets its own entities instead, if turned on
+    # (see constant_control.py).
     entities = [
         HovalRoomClimate(coordinator, entry, hc)
-        for hc in HEATING_CIRCUITS
+        for hc in present_circuits(entry.options)
+        if not on_constant_control(entry.options, hc)
     ]
-    async_add_entities(entities)
+    coordinator.add_entities(async_add_entities, entities)
 
 
 class HovalRoomClimate(
@@ -166,26 +172,19 @@ class HovalRoomClimate(
         # write_normal_setpoint_reg/write_eco_setpoint_reg are intentionally
         # excluded (only written, never read for display). room_actual_temp_reg
         # is only included if this circuit's source is actually set to
-        # "modbus" AND the register is configured, so switching to
-        # "none"/"entity" also stops polling it.
+        # "modbus", so switching to "none"/"entity" also stops polling it.
         context = [heating_circuit.mode_reg.key, heating_circuit.read_setpoint_reg.key]
-        if (
-            self._current_temp_source == CURRENT_TEMP_SOURCE_MODBUS
-            and heating_circuit.room_actual_temp_reg is not None
-        ):
+        if self._current_temp_source == CURRENT_TEMP_SOURCE_MODBUS:
             context.append(heating_circuit.room_actual_temp_reg.key)
-        # Needed by _active_smart_grid_offset() below, regardless of
-        # whether the corresponding select/number entities are enabled --
-        # see async_set_temperature().
-        if heating_circuit.smart_grid_offset_reg is not None:
-            context.append(SMART_GRID_MODE_REGISTER.key)
-            context.append(heating_circuit.smart_grid_offset_reg.key)
+        # Without the experimental function, cooling is neither shown nor
+        # written, as if the strategy didn't include it.
+        self._cooling_enabled = cooling_enabled(entry.options)
         # Polled even without stored cooling support, so cooling turned on at
         # the controller itself still shows.
-        if heating_circuit.cooling_flow_setpoint_reg is not None:
+        if self._cooling_enabled:
             context.append(heating_circuit.cooling_flow_setpoint_reg.key)
         self._cooling_supported = bool(
-            heating_circuit.cooling_flow_setpoint_reg is not None
+            self._cooling_enabled
             and entry.options.get(cooling_supported_key(heating_circuit))
         )
         self._cooling_flow_range = cooling_flow_range(heating_circuit, entry.options)
@@ -194,7 +193,6 @@ class HovalRoomClimate(
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{heating_circuit.key}"
         self._attr_translation_key = heating_circuit.key
-        self._attr_entity_registry_enabled_default = heating_circuit.enabled_default
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
@@ -295,20 +293,17 @@ class HovalRoomClimate(
         self._update_external_current_temp(event.data["new_state"])
         self.async_write_ha_state()
 
-    def _update_external_current_temp(self, state) -> None:
-        if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-            self._external_current_temp = None
-            return
-        try:
-            self._external_current_temp = float(state.state)
-        except (TypeError, ValueError):
-            _LOGGER.warning(
-                "%s: source entity %s has a non-numeric state (%r), ignoring",
+    def _update_external_current_temp(self, state: State | None) -> None:
+        """Takes the source entity's temperature in °C; None if it isn't
+        usable (unavailable, not numeric, unknown unit or implausible)."""
+        self._external_current_temp = parse_room_temperature(state)
+        if self._external_current_temp is None and state is not None:
+            _LOGGER.debug(
+                "%s: source entity %s has no usable temperature (%r)",
                 self._hc.key,
                 self._current_temp_entity_id,
                 state.state,
             )
-            self._external_current_temp = None
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -358,8 +353,9 @@ class HovalRoomClimate(
         super()._handle_coordinator_update()
 
     def _raw_cooling_active(self) -> bool:
-        reg = self._hc.cooling_flow_setpoint_reg
-        return reg is not None and bool(self.coordinator.data.get(reg.key))
+        if not self._cooling_enabled:
+            return False
+        return bool(self.coordinator.data.get(self._hc.cooling_flow_setpoint_reg.key))
 
     def _expire_stale_pending_cooling(self) -> None:
         if (
@@ -390,9 +386,15 @@ class HovalRoomClimate(
         self._pending_cooling = value > 0
         self._pending_cooling_since = dt_util.utcnow()
         self.async_write_ha_state()
-        await self.coordinator.async_write_value(
-            self._hc.cooling_flow_setpoint_reg, value, refresh
-        )
+        try:
+            await self.coordinator.async_write_value(
+                self._hc.cooling_flow_setpoint_reg, value, refresh
+            )
+        except UpdateFailed:
+            self._pending_cooling = None
+            self._pending_cooling_since = None
+            self.async_write_ha_state()
+            raise
 
     def _expire_stale_pending_mode(self) -> None:
         """Give up on an unconfirmed optimistic mode change after
@@ -433,7 +435,15 @@ class HovalRoomClimate(
         self._pending_mode_value = raw_mode
         self._pending_mode_since = dt_util.utcnow()
         self.async_write_ha_state()
-        await self.coordinator.async_write_value(self._hc.mode_reg, raw_mode, refresh)
+        try:
+            await self.coordinator.async_write_value(
+                self._hc.mode_reg, raw_mode, refresh
+            )
+        except UpdateFailed:
+            self._pending_mode_value = None
+            self._pending_mode_since = None
+            self.async_write_ha_state()
+            raise
 
     def _expire_stale_pending_temperature(self) -> None:
         """Give up on an unconfirmed optimistic temperature change after
@@ -464,25 +474,6 @@ class HovalRoomClimate(
         if self._pending_temperature is not None:
             return self._pending_temperature
         return self.coordinator.data.get(self._hc.read_setpoint_reg.key)
-
-    def _active_smart_grid_offset(self) -> float:
-        """This circuit's Smart Grid offset (see
-        HeatingCircuit.smart_grid_offset_reg) currently added by the
-        controller on top of the base setpoint, or 0 if Smart Grid isn't
-        in preferred operation or this circuit has no offset register.
-
-        read_setpoint_reg (read by target_temperature) always reflects
-        base setpoint + this offset while active -- see
-        async_set_temperature()."""
-        if self._hc.smart_grid_offset_reg is None:
-            return 0.0
-        raw_mode = self.coordinator.data.get(SMART_GRID_MODE_REGISTER.key)
-        if raw_mode is None:
-            return 0.0
-        if SMART_GRID_MODE_MAP.get(int(raw_mode)) != SMART_GRID_MODE_PREFERRED_OPERATION:
-            return 0.0
-        offset = self.coordinator.data.get(self._hc.smart_grid_offset_reg.key)
-        return offset if offset is not None else 0.0
 
     def _target_setpoint_register_for_current_mode(self) -> RegisterDef | None:
         """Which setpoint register to write applies to the current mode:
@@ -698,15 +689,22 @@ class HovalRoomClimate(
                 f"{HVACMode.AUTO!r} (Auto) with the {PRESET_ECO!r} preset."
             )
 
-        self._pending_temperature = temperature
+        # The controller adds an active Smart Grid offset on top of the base
+        # setpoint written here, and the setpoint it reports includes it.
+        offset = await self.coordinator.async_smart_grid_offset(
+            self._hc.smart_grid_offset_reg
+        )
+        base_setpoint = target_reg.clamp(temperature - offset)
+        self._pending_temperature = base_setpoint + offset
         self._pending_temperature_since = dt_util.utcnow()
         self.async_write_ha_state()
-        # Subtract any active Smart Grid offset so the base setpoint we
-        # write, plus that offset, still equals the requested temperature
-        # -- see _active_smart_grid_offset().
-        await self.coordinator.async_write_value(
-            target_reg, temperature - self._active_smart_grid_offset()
-        )
+        try:
+            await self.coordinator.async_write_value(target_reg, base_setpoint)
+        except UpdateFailed:
+            self._pending_temperature = None
+            self._pending_temperature_since = None
+            self.async_write_ha_state()
+            raise
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Write a new operating mode (Off / Constant / Auto) to the controller.
@@ -722,6 +720,7 @@ class HovalRoomClimate(
         if hvac_mode == HVACMode.COOL:
             await self._async_start_cooling()
             return
+        # Cooling is turned off before the operating mode is written.
         if self._cooling_active():
             await self._async_write_cooling(0, refresh=False)
 
@@ -738,8 +737,9 @@ class HovalRoomClimate(
     async def _async_start_cooling(self) -> None:
         """Turn cooling on with the flow temperature chosen in the number
         entity, after checking the control strategy still includes cooling.
-        The constant heating flow setpoint is set to 0 and the operating mode
-        to Constant first, which cooling requires."""
+        The constant heating flow setpoint is set to 0 first, which cooling
+        requires. The operating mode is left as it is: cooling is turned on
+        by the cooling flow setpoint alone."""
         if not self._cooling_supported:
             raise ServiceValidationError(
                 f"{self._hc.key} can't cool: its control strategy didn't include "
@@ -755,12 +755,8 @@ class HovalRoomClimate(
                 "options again."
             )
         heating_reg = self._hc.heating_constant_flow_reg
-        if heating_reg is not None and (
-            await self.coordinator.async_read_value(heating_reg)
-        ):
+        if await self.coordinator.async_read_value(heating_reg):
             await self.coordinator.async_write_value(heating_reg, 0, refresh=False)
-        if self._effective_raw_mode() != CLIMATE_MODE_CONSTANT:
-            await self._async_write_mode(CLIMATE_MODE_CONSTANT, refresh=False)
         minimum, maximum = self._cooling_flow_range
         value = self.coordinator.cooling_flow_setpoints.get(
             self._hc.key, COOLING_FLOW_DEFAULT
@@ -781,5 +777,10 @@ class HovalRoomClimate(
         # Update the cache optimistically (before the write completes /
         # before the next coordinator refresh confirms it), so an
         # immediate Off -> Auto right afterwards already picks this up.
+        previous_preset = self._last_preset
         self._last_preset = preset_mode
-        await self._async_write_mode(raw_mode)
+        try:
+            await self._async_write_mode(raw_mode)
+        except UpdateFailed:
+            self._last_preset = previous_preset
+            raise

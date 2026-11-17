@@ -40,39 +40,42 @@
           "general": "Allgemein",
           "heating_circuit_1": "Heizkreis 1",
           "heating_circuit_2": "Heizkreis 2",
-          "heating_circuit_3": "Heizkreis 3"
+          "heating_circuit_3": "Heizkreis 3",
+          "experimental": "Experimentelle Funktionen"
         }
       },
       "general": {
         "title": "Allgemein",
         "data": {
           "scan_interval": "Abfrageintervall (Sekunden)",
-          "timeout": "Modbus-Timeout pro Anfrage (Sekunden)"
+          "timeout": "Modbus-Timeout pro Anfrage (Sekunden)",
+          "heating_circuit_2_present": "Heizkreis 2 vorhanden",
+          "heating_circuit_3_present": "Heizkreis 3 vorhanden",
+          "dhw_present": "Warmwasser vorhanden"
         },
         "data_description": {
           "scan_interval": "Empfohlen: 20 Sekunden oder weniger. Das Hoval-Gateway lässt länger ungenutzte Verbindungen fallen, danach dauert jede Abfrage einige Sekunden länger.",
-          "timeout": "Standard: 3 s (auch wenn das Feld geleert wird). Andere Integrationen am selben Gateway teilen sich die Verbindung; es gilt der längste von ihnen verlangte Timeout."
+          "timeout": "Standard: 3 s. Teilen sich mehrere Integrationen das Gateway, gilt der längste Timeout.",
+          "heating_circuit_2_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
+          "heating_circuit_3_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
+          "dhw_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür."
         }
       },
       "circuit": {
         "title": "Heizkreis {circuit}",
-        "description": "Aktuelle Regelstrategie: {strategy}\nRaumtemperatur in der Steuerung: {room_temperature} °C (0 bedeutet: kein Wert)\n\nEine Home Assistant Entität kann nur an die Steuerung übertragen werden, wenn dort kein eigener Raumfühler angeschlossen ist und die Regelstrategie \"Reine Witterungsführung\" oder \"Witterungsführung mit Raumaufschaltung\" ist.",
+        "description": "Aktuelle Regelstrategie: {strategy}\nRaumtemperatur in der Steuerung: {room_temperature} °C (0 bedeutet: kein Wert)",
         "data": {
           "current_temp_source": "Quelle Raumtemperatur",
           "current_temp_entity_id": "Raumtemperatur-Entität",
-          "room_influence": "Raumfühler in Regelstrategie aufnehmen"
+          "room_influence": "Raumfühler in Regelstrategie aufnehmen",
+          "flow_setpoint_raise_min": "Kleinste Überhöhung Vorlauf-Soll",
+          "flow_setpoint_raise_max": "Größte Überhöhung Vorlauf-Soll"
         },
         "data_description": {
           "current_temp_entity_id": "Nur nötig für die Quellen, die eine Home Assistant Entität verwenden.",
-          "room_influence": "Ein: \"Witterungsführung mit Raumaufschaltung\", die Steuerung berücksichtigt die Raumtemperatur. Aus: \"Reine Witterungsführung\". Damit die Vorlauftemperatur korrigiert wird, muss zusätzlich der Parameter \"Raumtemperatur-Kompensation\" (03-007) am Bedienmodul über 0 stehen (Servicezugang)."
-        }
-      },
-      "confirm_room_influence": {
-        "title": "Heizkreis {circuit}: keine Raumtemperatur",
-        "description": "An der Steuerung wurde kein Raumfühler erkannt, und es wird kein Wert an sie übertragen. Die Regelstrategie funktioniert nur wie vorgesehen, wenn ein Raumfühler an der Steuerung angeschlossen ist, z. B. ein nachgerüsteter.",
-        "menu_options": {
-          "confirm_room_influence_yes": "Ein Raumfühler ist angeschlossen: in die Regelstrategie aufnehmen",
-          "confirm_room_influence_no": "Zurück"
+          "room_influence": "Schaltet auf die Regelstrategie mit Raumaufschaltung um. Braucht eine Raumtemperatur (Raumfühler oder übertragene Entität). Die Vorlauftemperatur wird nur korrigiert, wenn am Bedienmodul 03-007 \"Raumtemperatur-Kompensation\" über 0 steht.",
+          "flow_setpoint_raise_min": "Aktuell in der Steuerung: {current_raise} K. Untergrenze der Überhöhung, auch für die automatische Anpassung.",
+          "flow_setpoint_raise_max": "Obergrenze der Überhöhung, auch für die automatische Anpassung."
         }
       },
       "confirm_risks": {
@@ -81,6 +84,30 @@
         "data": {
           "accept_risks": "Ich habe die Hinweise gelesen und möchte fortfahren"
         }
+      },
+      "experimental": {
+        "title": "Experimentelle Funktionen",
+        "description": "Diese Funktionen werden noch an wenigen Anlagen erprobt. Sie können die Wärmepumpe weniger effizient arbeiten lassen oder die Räume zu kalt oder zu warm werden lassen. Beobachte die Anlage deshalb nach dem Einschalten. Einige davon werden anschließend im Formular eines Heizkreises eingerichtet.",
+        "data": {
+          "experimental_cooling": "Kühlen",
+          "experimental_room_influence": "Raumaufschaltung",
+          "experimental_flow_setpoint_raise": "Überhöhung Vorlauf-Soll",
+          "experimental_constant_control": "Konstantregelung (Regelstrategie 3)"
+        },
+        "data_description": {
+          "experimental_cooling": "Aktiviert das Kühlen für Heizkreise, deren Regelstrategie es vorsieht. Nur einschalten, wenn die Anlage kühlen kann.",
+          "experimental_room_influence": "Ermöglicht, die Raumaufschaltung pro Heizkreis ein- und auszuschalten und eine Raumtemperatur aus Home Assistant an die Steuerung zu senden.",
+          "experimental_flow_setpoint_raise": "Ermöglicht, die Vorlauftemperatur der Wärmepumpe gegenüber dem Heizkreis anzuheben, für Heizkreis 1 mit Vorschlag und automatischer Anpassung.",
+          "experimental_constant_control": "Steuert Heizkreise mit Konstantregelung über eine Auswahl Heizen / Aus / Kühlen und feste Vorlauftemperaturen."
+        }
+      },
+      "confirm_cooling_off": {
+        "title": "Kühlen ausschalten",
+        "description": "Heizkreis(e) {circuits} kühlen gerade. Beim Speichern wird das Kühlen dort ausgeschaltet und geprüft, erst dann wird gespeichert.\n\nSchließe den Dialog, um nichts zu ändern."
+      },
+      "confirm_room_influence_off": {
+        "title": "Raumaufschaltung ausschalten",
+        "description": "Für Heizkreis(e) {circuits} wird die Regelstrategie auf den Wert vor der Raumaufschaltung zurückgesetzt und geprüft, erst dann wird gespeichert.\n\nSchließe den Dialog, um nichts zu ändern."
       }
     },
     "error": {
@@ -88,11 +115,14 @@
       "entity_unavailable": "Diese Entität hat zurzeit keine verwendbare Temperatur (5 bis 40 °C).",
       "strategy_not_writable": "Der aktuelle Zustand der Steuerung erlaubt das Übertragen eines Werts nicht.",
       "write_failed": "Das Schreiben auf die Steuerung ist fehlgeschlagen. Details stehen im Log.",
-      "risks_not_accepted": "Bestätige die Hinweise, um fortzufahren."
+      "risks_not_accepted": "Bestätige die Hinweise, um fortzufahren.",
+      "raise_bounds": "Die kleinste Überhöhung darf nicht über der größten liegen.",
+      "room_influence_without_temperature": "Die Raumaufschaltung braucht eine Raumtemperatur: Schließe einen Raumfühler an, übertrage eine Entität oder schalte die Raumaufschaltung aus.",
+      "room_influence_sending": "Heizkreis(e) {circuits} übertragen noch eine Raumtemperatur an die Steuerung. Stelle zuerst ihre Quelle der Raumtemperatur um."
     },
     "abort": {
       "not_loaded": "Die Integration läuft nicht. Prüfe die Verbindung zur Steuerung.",
-      "cannot_read": "Die Werte des Heizkreises konnten nicht von der Steuerung gelesen werden."
+      "cannot_read": "Die Werte konnten nicht von der Steuerung gelesen werden."
     }
   },
   "entity": {
@@ -161,6 +191,14 @@
           "locked": "Gesperrt",
           "forced_consumption": "Abnahmezwang"
         }
+      },
+      "constant_mode": {
+        "name": "Konstantregelung Heizkreis {circuit}",
+        "state": {
+          "heat": "Heizen",
+          "off": "Aus",
+          "cool": "Kühlen"
+        }
       }
     },
     "number": {
@@ -195,13 +233,25 @@
         "name": "Smart Grid Offset Warmwasser"
       },
       "smart_grid_offset_buffer_heating": {
-        "name": "Smart Grid Offset Puffer Heizen"
+        "name": "Smart Grid Offset Puffermodul 143 Heizen"
       },
       "smart_grid_offset_buffer_cooling": {
-        "name": "Smart Grid Offset Puffer Kühlen"
+        "name": "Smart Grid Offset Puffermodul 143 Kühlen"
       },
       "cooling_flow_setpoint": {
         "name": "Vorlauf Soll Kühlen Heizkreis {circuit}"
+      },
+      "constant_heating_flow": {
+        "name": "Vorlauf-Soll Konstant Heizen Heizkreis {circuit}"
+      },
+      "constant_cooling_flow": {
+        "name": "Vorlauf-Soll Konstant Kühlen Heizkreis {circuit}"
+      },
+      "smart_grid_offset_buffer_142_heating": {
+        "name": "Smart Grid Offset Puffermodul 142 Heizen"
+      },
+      "smart_grid_offset_buffer_142_cooling": {
+        "name": "Smart Grid Offset Puffermodul 142 Kühlen"
       }
     },
     "sensor": {
@@ -366,6 +416,9 @@
       "heat_pump_circulation_pump_speed": {
         "name": "Drehzahl Umwälzpumpe Wärmepumpe"
       },
+      "flow_setpoint_raise_suggestion_hc1": {
+        "name": "Vorschlag Überhöhung Vorlauf-Soll Heizkreis 1"
+      },
       "operating_hours_heat_generator_above_50": {
         "name": "Betriebsstunden Wärmeerzeuger >50%"
       },
@@ -395,6 +448,29 @@
       },
       "operating_hours_heat_generator": {
         "name": "Betriebsstunden Wärmeerzeuger"
+      },
+      "flow_temp_hc2": {
+        "name": "Vorlauf Ist-Temperatur Heizkreis 2"
+      },
+      "supply_target_temp_hc2": {
+        "name": "Vorlauf Soll-Temperatur Heizkreis 2"
+      },
+      "mixing_valve_hc2": {
+        "name": "Mischer Heizkreis 2"
+      },
+      "flow_temp_hc3": {
+        "name": "Vorlauf Ist-Temperatur Heizkreis 3"
+      },
+      "supply_target_temp_hc3": {
+        "name": "Vorlauf Soll-Temperatur Heizkreis 3"
+      },
+      "mixing_valve_hc3": {
+        "name": "Mischer Heizkreis 3"
+      }
+    },
+    "switch": {
+      "flow_setpoint_raise_auto_hc1": {
+        "name": "Automatische Überhöhung Vorlauf-Soll Heizkreis 1"
       }
     }
   },

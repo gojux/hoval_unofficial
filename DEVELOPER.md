@@ -83,8 +83,54 @@ integration. For installation and usage as an end user, see
   into localized texts (English/German): `HovalStatusSensor` (status),
   `HovalControllerErrorSensor` (error code, 255 = no error), the Smart
   Grid status sensor and, per heating circuit, the control strategy and
-  status sensors (diagnostic, disabled by default)
-- `number.py` – creates writable HA entities from `NUMBER_REGISTERS`
+  status sensors (diagnostic, disabled by default), and the suggested flow
+  setpoint raise of heating circuit 1 (diagnostic; only while
+  `flow_setpoint_raise_learning`, see `raise_control.py`)
+- `flow_setpoint_raise.py` – works out the suggested flow setpoint raise
+  from the polled values, without Home Assistant dependencies: surplus /
+  balance detection, the raise needed in balance, the table of the raise
+  per outdoor temperature range, and `AutoRaise`, which decides what the
+  automatic adjustment writes (down right away, up in small steps). It only
+  measures while the circuit sets the heat generator setpoint (setpoint =
+  circuit flow setpoint + raise, rounded down to 0.5 K), otherwise
+  `other_demand`
+- `raise_control.py` – `FlowSetpointRaiseControl`, created in
+  `async_setup_entry` while heating circuit 1's raise is offered
+  (`flow_setpoint_raise_offered`: experimental function on, no buffer module,
+  strategy 0/1 stored as `control_strategy_key`) and the heat pump has a
+  buffer sensor (`CONF_BUFFER_SENSOR`, 27493 != 0), see
+  `flow_setpoint_raise_learning`. It
+  listens to the coordinator with the registers it needs as context, works
+  out the suggestion on every poll, keeps what it learned in a `Store`
+  (removed with the entry) and writes the raise while the switch is on.
+  For every circuit, `async_sync_flow_setpoint_raise` remembers the raise on
+  the controller once the integration provides that circuit's raise
+  (`flow_setpoint_raise_offered`, key `flow_setpoint_raise_previous_key`) and
+  writes it back (read back, then dropped) once it no longer does. The
+  options flow runs it before saving, pausing heating circuit 1's automatic
+  adjustment, and refuses to save if it fails; `async_setup_entry` runs it
+  too, e.g. for a strategy read at startup. `async_cleanup_removed_entry`
+  writes back all remembered raises on removal (only logging a failure);
+  cooling and constant control are left as they are
+- `number.py` – creates writable HA entities from `NUMBER_REGISTERS`; some
+  only under conditions: the flow setpoint raises (`flow_setpoint_raise_offered`,
+  range from `flow_setpoint_raise_bounds`), the buffer Smart Grid offsets per
+  found buffer module (`buffer_module_key`), the cooling Smart Grid offsets
+  at strategy 3/4/5 (`control_strategy_key`). A
+  written value is shown right away until the next poll confirms it
+  (`change_pending` attribute, given up after 90 s)
+- `switch.py` – the switch for the automatic flow setpoint raise
+  (`RestoreEntity`, off when first created)
+- `constant_control.py` – `ConstantFlowControl`, one per heating circuit on
+  constant control (strategy 3) while that experimental function is on
+  (`constant_control_enabled`, strategy read by `async_read_circuit_options`).
+  Without that function, a circuit on strategy 3 (`on_constant_control`) gets
+  no climate entity, and its options form has no room temperature source.
+  Derives the mode from the two constant flow setpoints, keeps both
+  setpoints, and switches the mode in a background task: other setpoint 0,
+  read back, `SWITCH_PAUSE_SECONDS`, then the new setpoint. The select
+  (`HovalConstantModeSelect`) and the two numbers (`HovalConstantFlowNumber`,
+  `RestoreNumber`) show its state; climate.py skips these circuits
 - `select.py` – `HovalMappedSelect`, a generic writable `select` entity
   used for the two Smart Grid registers (trigger/mode), mapping the raw
   register value to a stable option key (same pattern as
@@ -140,11 +186,19 @@ must be the *only* source of the name.
 
 ## Cooling (per heating circuit)
 
+Cooling is an experimental function (`CONF_EXPERIMENTAL_COOLING`,
+`cooling_enabled`). Without it, `HovalRoomClimate` neither polls nor shows
+nor writes the cooling flow setpoint, and no cooling number is created, so
+strategies 4/5 behave like 0/1. Turning it off while a circuit's cooling flow
+setpoint is above 0 goes through `async_step_confirm_cooling_off`, which
+writes 0, reads it back and only then saves the options.
+
 A circuit can cool if `HeatingCircuit.cooling_flow_setpoint_reg` is set
 and its control strategy is 4 or 5
 (`CONTROL_STRATEGIES_COOLING`). Whether it is, and the circuit's minimum
 cooling flow temperature, are read on the first setup and whenever the circuit
-is saved in the options (`async_read_cooling_options` in `__init__.py`), and
+is saved in the options (`async_read_circuit_options` in `__init__.py`,
+which also reads constant control and the maximum flow temperature), and
 stored in the options -- not polled, since they only change when the installer
 changes the controller's configuration.
 
@@ -154,18 +208,45 @@ shows `HVACMode.COOL` whenever that register is above 0, and writes the value
 of `HovalCoolingFlowSetpointNumber` (kept by Home Assistant via
 `RestoreNumber`, shared through `coordinator.cooling_flow_setpoints`) when
 switched to cool, after re-reading the control strategy. Before that it sets
-`heating_constant_flow_reg` to 0 and the mode register to Constant if they
-aren't: with strategy 4/5 the circuit only cools while the constant heating
-flow setpoint is 0. Heating is weather
+`heating_constant_flow_reg` to 0 if it isn't: with strategy 4/5 the circuit
+only cools while the constant heating flow setpoint is 0. The mode register
+is not written when cooling starts (Hoval); switching from cool to another
+mode writes the cooling flow setpoint 0 first and then the mode register. Heating is weather
 compensated with these strategies and doesn't use that register (only
-strategy 3 does, which isn't supported), so it isn't restored when cooling
+strategy 3 does, see `constant_control.py`), so it isn't restored when cooling
 stops.
+
+## Heating circuits and hot water present
+
+`circuit_present` / `dhw_present` (options `heating_circuit_N_present`,
+`dhw_present`; heating circuit 1 always). Every platform, the options menu,
+the circuit options read at startup and the room temperature writers only
+handle present ones (`present_circuits`); `async_sync_flow_setpoint_raise`
+drops a remembered raise of a circuit that isn't there without writing.
+`_detect_present` in `__init__.py` fills missing options from the first
+poll (flow temperature / hot water temperature other than 0) and the entity
+registry (a circuit with an enabled entity); hot water is always present for
+an entry that already had options.
+
+Every platform adds its entities through `coordinator.add_entities`, which
+remembers their unique IDs; after the platforms are set up,
+`_remove_stale_entities` removes the entry's disabled registry entries not
+among them (Home Assistant doesn't offer to delete a disabled entity, as it
+can't tell whether it is still provided). Enabled ones are kept.
 
 ## Room temperature source (per heating circuit)
 
+Sending and switching room influence need the experimental function
+`CONF_EXPERIMENTAL_ROOM_INFLUENCE` (`room_influence_enabled`); without it the
+circuit form offers neither. Turning it off is refused while a circuit sends
+(`room_influence_sending`), and strategies with a `previous_strategy_key`
+are set back via `async_step_confirm_room_influence_off`. The experimental
+step chains its confirmations in `_async_finish_experimental`: room
+influence, then cooling, then the raises, then saving.
+
 Each heating circuit's `current_temperature` can come from one of four
 sources, configurable **individually per circuit** via the integration's
-**options** (entry's three-dot menu → "Configure" — not the initial setup
+**options** (entry's cog icon, "Configure" — not the initial setup
 form, so it can be changed anytime without re-adding the integration):
 
 - **None** (default) -- no current temperature is shown.
@@ -195,10 +276,13 @@ form, so it can be changed anytime without re-adding the integration):
 
 The form for a circuit is built from what is read when it opens: a value in
 the room register other than 0 counts as a sensor, except while sending, when
-the register holds the integration's own value. Only strategies 0 and 1 are
-ever written, independently of the chosen source, and only 0 -> 1 is
-remembered (`previous_strategy_key`), so it can be restored when the entry is
-removed (`async_remove_entry`).
+the register holds the integration's own value. Only the pairs in
+`WITHOUT_INFLUENCE_TO_WITH` (0 <-> 1, 4 <-> 5) are ever written,
+independently of the chosen source, and only switching room influence on is remembered
+(`previous_strategy_key`), so it can be restored when the entry is removed
+(`async_remove_entry`). Saving with room influence on, no sensor detected and
+nothing sent is refused (`room_influence_without_temperature`): the room
+register would hold 0, and how the controller takes 0 is not known.
 
 Changing any of these options reloads the config entry automatically
 (same mechanism as changing `scan_interval`).

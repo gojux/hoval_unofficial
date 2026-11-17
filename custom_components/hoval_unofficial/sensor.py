@@ -1,6 +1,8 @@
 """Sensor entities for the Heat Pump Modbus integration."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
@@ -10,6 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CIRCUIT_SENSOR_KEYS,
+    COOLING_SENSOR_KEYS,
     CONTROLLER_ERROR_MAP,
     CONTROLLER_ERROR_OPTIONS,
     CONTROLLER_ERROR_REGISTER,
@@ -33,8 +37,11 @@ from .const import (
     SMART_GRID_STATUS_OPTIONS,
     SMART_GRID_STATUS_REGISTER,
     SMART_GRID_STATUS_UNKNOWN,
+    cooling_enabled,
+    present_circuits,
 )
 from .coordinator import HovalModbusCoordinator
+from .raise_control import POLLED_KEYS, FlowSetpointRaiseControl
 
 
 async def async_setup_entry(
@@ -43,24 +50,42 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: HovalModbusCoordinator = hass.data[DOMAIN][entry.entry_id]
+    circuits = present_circuits(entry.options)
+    # The sensors of circuits that aren't there.
+    absent = {
+        key
+        for hc in HEATING_CIRCUITS
+        if hc not in circuits
+        for key in CIRCUIT_SENSOR_KEYS[hc.key]
+    }
 
+    cooling = cooling_enabled(entry.options)
     entities: list[SensorEntity] = [
-        HovalSensor(coordinator, entry, reg) for reg in SENSOR_REGISTERS
+        HovalSensor(
+            coordinator,
+            entry,
+            reg,
+            enabled=True if cooling and reg.key in COOLING_SENSOR_KEYS else None,
+        )
+        for reg in SENSOR_REGISTERS
+        if reg.key not in absent
     ]
     entities.append(HovalStatusSensor(coordinator, entry))
     entities.append(HovalControllerErrorSensor(coordinator, entry))
     entities.append(HovalSmartGridStatusSensor(coordinator, entry))
     entities.extend(
-        HovalControlStrategySensor(coordinator, entry, hc)
-        for hc in HEATING_CIRCUITS
-        if hc.control_strategy_reg is not None
+        HovalControlStrategySensor(coordinator, entry, hc) for hc in circuits
     )
     entities.extend(
-        HovalHeatingCircuitStatusSensor(coordinator, entry, hc)
-        for hc in HEATING_CIRCUITS
-        if hc.status_reg is not None
+        HovalHeatingCircuitStatusSensor(coordinator, entry, hc) for hc in circuits
     )
-    async_add_entities(entities)
+    if coordinator.flow_setpoint_raise is not None:
+        entities.append(
+            HovalFlowSetpointRaiseSuggestionSensor(
+                coordinator, entry, coordinator.flow_setpoint_raise
+            )
+        )
+    coordinator.add_entities(async_add_entities, entities)
 
 
 class HovalSensor(CoordinatorEntity[HovalModbusCoordinator], SensorEntity):
@@ -73,6 +98,7 @@ class HovalSensor(CoordinatorEntity[HovalModbusCoordinator], SensorEntity):
         coordinator: HovalModbusCoordinator,
         entry: ConfigEntry,
         reg: RegisterDef,
+        enabled: bool | None = None,
     ) -> None:
         super().__init__(coordinator, context=[reg.key])
         self._reg = reg
@@ -84,7 +110,9 @@ class HovalSensor(CoordinatorEntity[HovalModbusCoordinator], SensorEntity):
         self._attr_icon = reg.icon
         if reg.precision is not None:
             self._attr_suggested_display_precision = reg.precision
-        self._attr_entity_registry_enabled_default = reg.enabled_default
+        self._attr_entity_registry_enabled_default = (
+            reg.enabled_default if enabled is None else enabled
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
@@ -319,3 +347,47 @@ class HovalHeatingCircuitStatusSensor(
         if raw_value is None:
             return None
         return {"raw_status_code": int(raw_value)}
+
+
+class HovalFlowSetpointRaiseSuggestionSensor(
+    CoordinatorEntity[HovalModbusCoordinator], SensorEntity
+):
+    """The flow setpoint raise of heating circuit 1 the integration would
+    choose (see flow_setpoint_raise.py), worked out by
+    FlowSetpointRaiseControl on every poll. Written to the controller only
+    while the automatic adjustment is on."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "flow_setpoint_raise_suggestion_hc1"
+    _attr_native_unit_of_measurement = "K"
+    _attr_state_class = "measurement"
+    _attr_suggested_display_precision = 1
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: HovalModbusCoordinator,
+        entry: ConfigEntry,
+        control: FlowSetpointRaiseControl,
+    ) -> None:
+        super().__init__(coordinator, context=list(POLLED_KEYS))
+        self._control = control
+        self._attr_unique_id = f"{entry.entry_id}_flow_setpoint_raise_suggestion_hc1"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Hoval (Modbus)",
+            model="Heat Pump Controller",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        suggestion = self._control.suggestion
+        return None if suggestion is None else suggestion.value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        suggestion = self._control.suggestion
+        if suggestion is None:
+            return None
+        return {"mode": suggestion.mode, **suggestion.attributes}

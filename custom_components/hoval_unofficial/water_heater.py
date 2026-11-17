@@ -17,10 +17,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    dhw_present,
     DHW_CURRENT_TEMP_REGISTER,
     DHW_ECO_TARGET_TEMP_REGISTER,
     DHW_MODE_REGISTER,
@@ -31,9 +32,6 @@ from .const import (
     DOMAIN,
     OPERATION_TO_DHW_MODE,
     RegisterDef,
-    SMART_GRID_MODE_MAP,
-    SMART_GRID_MODE_PREFERRED_OPERATION,
-    SMART_GRID_MODE_REGISTER,
     SMART_GRID_OFFSET_DHW_REGISTER,
 )
 from .coordinator import HovalModbusCoordinator
@@ -72,7 +70,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: HovalModbusCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([HovalWaterHeater(coordinator, entry)])
+    if dhw_present(entry.options):
+        coordinator.add_entities(async_add_entities, [HovalWaterHeater(coordinator, entry)])
 
 
 class HovalWaterHeater(
@@ -114,11 +113,6 @@ class HovalWaterHeater(
                 DHW_CURRENT_TEMP_REGISTER.key,
                 DHW_ACTUAL_TARGET_TEMP_REGISTER.key,
                 DHW_MODE_REGISTER.key,
-                # Needed by _active_smart_grid_offset() below, regardless of
-                # whether the corresponding select/number entities are
-                # enabled -- see async_set_temperature().
-                SMART_GRID_MODE_REGISTER.key,
-                SMART_GRID_OFFSET_DHW_REGISTER.key,
                 # DHW_NORMAL_TARGET_TEMP_REGISTER / DHW_ECO_TARGET_TEMP_REGISTER
                 # intentionally excluded: both are only written (in
                 # async_set_temperature), never read for display --
@@ -151,25 +145,6 @@ class HovalWaterHeater(
         # target_temperature can reflect it immediately.
         self._pending_temperature: float | None = None
         self._pending_temperature_since: datetime | None = None
-
-    def _active_smart_grid_offset(self) -> float:
-        """The DHW Smart Grid offset (see SMART_GRID_OFFSET_DHW_REGISTER)
-        currently added by the controller on top of the base setpoint, or
-        0 if Smart Grid isn't in preferred operation.
-
-        DHW_ACTUAL_TARGET_TEMP_REGISTER (read by target_temperature) always
-        reflects base setpoint + this offset while active. Without
-        accounting for it, writing a new target_temperature here would
-        write straight into the base setpoint and silently add the offset
-        on top a second time -- see async_set_temperature().
-        """
-        raw_mode = self.coordinator.data.get(SMART_GRID_MODE_REGISTER.key)
-        if raw_mode is None:
-            return 0.0
-        if SMART_GRID_MODE_MAP.get(int(raw_mode)) != SMART_GRID_MODE_PREFERRED_OPERATION:
-            return 0.0
-        offset = self.coordinator.data.get(SMART_GRID_OFFSET_DHW_REGISTER.key)
-        return offset if offset is not None else 0.0
 
     def _target_temp_register_for_current_mode(self) -> RegisterDef | None:
         """Which setpoint register to write applies to the current
@@ -386,15 +361,22 @@ class HovalWaterHeater(
                 f"{DHW_STATE_CONSTANT!r} or {STATE_ECO!r}."
             )
 
-        self._pending_temperature = temperature
+        # The controller adds an active Smart Grid offset on top of the base
+        # setpoint written here, and the setpoint it reports includes it.
+        offset = await self.coordinator.async_smart_grid_offset(
+            SMART_GRID_OFFSET_DHW_REGISTER
+        )
+        base_setpoint = target_reg.clamp(temperature - offset)
+        self._pending_temperature = base_setpoint + offset
         self._pending_temperature_since = dt_util.utcnow()
         self.async_write_ha_state()
-        # Subtract any active Smart Grid offset so the base setpoint we
-        # write, plus that offset, still equals the requested temperature
-        # -- see _active_smart_grid_offset().
-        await self.coordinator.async_write_value(
-            target_reg, temperature - self._active_smart_grid_offset()
-        )
+        try:
+            await self.coordinator.async_write_value(target_reg, base_setpoint)
+        except UpdateFailed:
+            self._pending_temperature = None
+            self._pending_temperature_since = None
+            self.async_write_ha_state()
+            raise
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
         """Write a new operating mode to the controller, showing it
@@ -405,4 +387,10 @@ class HovalWaterHeater(
         self._pending_raw_mode = raw_mode
         self._pending_mode_since = dt_util.utcnow()
         self.async_write_ha_state()
-        await self.coordinator.async_write_value(DHW_MODE_REGISTER, raw_mode)
+        try:
+            await self.coordinator.async_write_value(DHW_MODE_REGISTER, raw_mode)
+        except UpdateFailed:
+            self._pending_raw_mode = None
+            self._pending_mode_since = None
+            self.async_write_ha_state()
+            raise

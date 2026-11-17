@@ -36,9 +36,19 @@ SOURCE_ENTITY = "sensor.e2e_room_temperature"
 WRITE_TIMEOUT_SECONDS = 90
 SETPOINT_REGISTERS = {1: 1493, 2: 1494, 3: 1495}
 MODE_REGISTER_HC1 = 1478
+FLOW_TEMP_REGISTERS = {2: 1514, 3: 1515}
+DHW_TEMP = 1500
 COOLING_FLOW_SETPOINT_HC1 = 19482
 COOLING_FLOW_MIN_HC1 = 29435
 HEATING_CONSTANT_FLOW_HC1 = 1490
+FLOW_SETPOINT_RAISE_HC1 = 30684
+FLOW_SETPOINT_RAISE_HC2 = 30685
+COOLING_FLOW_SETPOINT_HC3 = 23756
+FLOW_MAX_HC1 = 30690
+# Buffer temperature of buffer module PS UnitId 142.
+BUFFER_MODULE_TEMP = 17324
+# Low word of the buffer sensor (WPF, 27493/27494).
+BUFFER_SENSOR = 27494
 # The room setpoint is sent after 5 minutes without a usable value.
 FALLBACK_TIMEOUT_SECONDS = 6 * 60
 
@@ -344,6 +354,12 @@ def writer_status(token: str, entry_id: str, circuit: int) -> dict:
 
 def check_sending(token: str, entry_id: str) -> None:
     room, strategy = ROOM_REGISTERS[1], STRATEGY_REGISTERS[1]
+    form = open_circuit_form(token, entry_id, 1)
+    if "entity_write" in source_options(form) or "room_influence" in form_fields(form):
+        raise SystemExit("Room influence is offered before it is turned on")
+    set_experimental(token, entry_id, room_influence=True)
+    print("OK: sending and room influence are only offered once turned on")
+
     set_source_state(token, "unavailable")
     form = open_circuit_form(token, entry_id, 1)
     if "entity_write" not in source_options(form):
@@ -488,9 +504,9 @@ def check_sensor_detection(token: str, entry_id: str) -> None:
     expect_sim(strategy, 1)
     print("OK: a room sensor is detected and strategy 1 is offered")
 
-    write_sim(STRATEGY_REGISTERS[3], 3)
+    write_sim(STRATEGY_REGISTERS[3], 2)
     if "entity_write" in source_options(open_circuit_form(token, entry_id, 3)):
-        raise SystemExit("Sending is offered at strategy 3")
+        raise SystemExit("Sending is offered at strategy 2")
     write_sim(STRATEGY_REGISTERS[3], 1)
     form = open_circuit_form(token, entry_id, 3)
     if form_fields(form)["room_influence"].get("default") is not True:
@@ -499,27 +515,18 @@ def check_sensor_detection(token: str, entry_id: str) -> None:
         raise SystemExit("Reading the controller's sensor is not offered")
     print("OK: the offers follow the control strategy")
 
-    # Room influence without any room temperature needs a confirmation.
+    # Room influence without any room temperature is refused.
     write_sim(STRATEGY_REGISTERS[3], 0)
     form = open_circuit_form(token, entry_id, 3)
-    data = {"current_temp_source": "none", "room_influence": True}
-    confirm = submit_form(token, form, data)
-    if confirm.get("step_id") != "confirm_room_influence":
-        raise SystemExit(f"No confirmation was asked for: {confirm}")
+    result = submit_form(
+        token, form, {"current_temp_source": "none", "room_influence": True}
+    )
+    if result.get("errors", {}).get("base") != "room_influence_without_temperature":
+        raise SystemExit(f"Room influence without a room temperature was accepted: {result}")
+    time.sleep(2)
     if read_sim(STRATEGY_REGISTERS[3]) != 0:
-        raise SystemExit("Strategy was changed before the confirmation")
-    back = submit_form(token, confirm, {"next_step_id": "confirm_room_influence_no"})
-    if back.get("step_id") != "circuit":
-        raise SystemExit(f"Going back did not reopen the form: {back}")
-    if form_fields(back)["room_influence"].get("default") is not True:
-        raise SystemExit("Going back lost the checkbox")
-    confirm = submit_form(token, back, data)
-    result = submit_form(token, confirm, {"next_step_id": "confirm_room_influence_yes"})
-    result = accept_risks(token, result)
-    if result.get("type") != "create_entry":
-        raise SystemExit(f"Confirming did not save: {result}")
-    expect_sim(STRATEGY_REGISTERS[3], 1)
-    print("OK: room influence without a room temperature needs confirmation")
+        raise SystemExit("Strategy was changed although saving was refused")
+    print("OK: room influence without a room temperature is refused")
 
 
 def call_service(token: str, domain: str, service: str, data: dict) -> None:
@@ -553,11 +560,52 @@ def check_cooling(token: str, entry_id: str) -> None:
     write_sim(STRATEGY_REGISTERS[1], 4)
     write_sim(COOLING_FLOW_MIN_HC1, 160)
     configure_circuit(token, entry_id, 1, {"current_temp_source": "none"})
+    wait_until_polling(token)
+    if "cool" in entity_state(token, "climate.e2e_heat_pump_heating_circuit_1")[
+        "attributes"
+    ]["hvac_modes"]:
+        raise SystemExit("Cooling is offered although cooling is turned off")
+    states = {s["entity_id"] for s in request("GET", "/api/states", token=token)}
+    if any(eid.endswith(number) for eid in states):
+        raise SystemExit("The cooling flow setpoint exists although cooling is off")
+    print("OK: without the cooling option, strategy 4 is handled like 0")
+
+    set_experimental(token, entry_id, cooling=True)
     wait_for_attribute(token, climate, lambda s: "cool" in s["attributes"]["hvac_modes"])
+    wait_for_attribute(
+        token,
+        "sensor.e2e_heat_pump_current_cooling_power",
+        lambda s: s["state"] not in ("unavailable", "unknown"),
+    )
+    print("OK: turning cooling on enables the cooling sensors")
     state = wait_for_attribute(token, number, lambda s: s["state"] == "18.0")
     if state["attributes"]["min"] != 16 or state["attributes"]["max"] != 25:
         raise SystemExit(f"Cooling flow range is wrong: {state['attributes']}")
     print("OK: saving the circuit finds cooling and the minimum flow temperature")
+
+    configure_circuit(
+        token,
+        entry_id,
+        1,
+        {
+            "current_temp_source": "entity_write",
+            "current_temp_entity_id": SOURCE_ENTITY,
+            "room_influence": True,
+        },
+    )
+    expect_sim(STRATEGY_REGISTERS[1], 5)
+    expect_sim(ROOM_REGISTERS[1], 230)
+    wait_until_polling(token)
+    wait_for_attribute(token, climate, lambda s: "cool" in s["attributes"]["hvac_modes"])
+    configure_circuit(
+        token, entry_id, 1, {"current_temp_source": "none", "room_influence": False}
+    )
+    expect_sim(STRATEGY_REGISTERS[1], 4)
+    expect_sim(ROOM_REGISTERS[1], 0)
+    wait_until_polling(token)
+    wait_for_attribute(token, climate, lambda s: "cool" in s["attributes"]["hvac_modes"])
+    state = wait_for_attribute(token, number, lambda s: s["state"] == "18.0")
+    print("OK: room influence switches between strategies 4 and 5")
 
     number_id = state["entity_id"]
     climate_id = entity_state(token, climate)["entity_id"]
@@ -574,12 +622,12 @@ def check_cooling(token: str, entry_id: str) -> None:
     expect_sim(COOLING_FLOW_SETPOINT_HC1, 200)
     if read_sim(HEATING_CONSTANT_FLOW_HC1) != 0:
         raise SystemExit("Cooling didn't set the constant heating flow setpoint to 0")
-    if read_sim(MODE_REGISTER_HC1) != 4:
-        raise SystemExit("Cooling didn't set the operating mode to Constant")
+    if read_sim(MODE_REGISTER_HC1) != 1:
+        raise SystemExit("Cooling changed the operating mode")
     state = wait_for_attribute(token, climate, lambda s: s["state"] == "cool")
     if "temperature" in state["attributes"]:
         raise SystemExit("A target temperature is shown while cooling")
-    print("OK: cool sets heating flow 0 and mode Constant, then writes the cooling flow")
+    print("OK: cool sets heating flow 0 and writes the cooling flow, mode unchanged")
 
     call_service(token, "number", "set_value", {"entity_id": number_id, "value": 21})
     expect_sim(COOLING_FLOW_SETPOINT_HC1, 210)
@@ -592,7 +640,7 @@ def check_cooling(token: str, entry_id: str) -> None:
     expect_sim(MODE_REGISTER_HC1, 4)
     if read_sim(HEATING_CONSTANT_FLOW_HC1) != 0:
         raise SystemExit("Turning cooling off changed the constant heating flow setpoint")
-    print("OK: heat turns cooling off")
+    print("OK: heat turns cooling off, then writes the operating mode")
 
     write_sim(STRATEGY_REGISTERS[1], 0)
     try:
@@ -607,8 +655,346 @@ def check_cooling(token: str, entry_id: str) -> None:
         raise SystemExit("Cooling was written although the strategy has no cooling")
     print("OK: cooling is refused once the strategy no longer includes it")
 
+    # Turning the cooling option off while the circuit cools.
+    write_sim(STRATEGY_REGISTERS[1], 4)
+    configure_circuit(token, entry_id, 1, {"current_temp_source": "none"})
+    wait_until_polling(token)
+    write_sim(COOLING_FLOW_SETPOINT_HC1, 200)
+    form = open_options_step(token, entry_id, "experimental")
+    confirm = submit_form(token, form, {"experimental_cooling": False})
+    if confirm.get("step_id") != "confirm_cooling_off":
+        raise SystemExit(f"Turning cooling off while cooling was not confirmed: {confirm}")
+    if confirm["description_placeholders"].get("circuits") != "1":
+        raise SystemExit(f"The cooling circuits are not named: {confirm}")
+    if read_sim(COOLING_FLOW_SETPOINT_HC1) != 200:
+        raise SystemExit("Cooling was turned off before the confirmation")
+    result = submit_form(token, confirm, {})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Confirming did not save: {result}")
+    if read_sim(COOLING_FLOW_SETPOINT_HC1) != 0:
+        raise SystemExit("Cooling was not turned off before saving")
+    wait_until_polling(token)
+    wait_for_attribute(
+        token, climate, lambda s: "cool" not in s["attributes"]["hvac_modes"]
+    )
+    print("OK: turning the cooling option off turns cooling off first, once confirmed")
+    write_sim(STRATEGY_REGISTERS[1], 0)
+    configure_circuit(token, entry_id, 1, {"current_temp_source": "none"})
+    wait_until_polling(token)
+
+
+def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
+    bounds = ("flow_setpoint_raise_min", "flow_setpoint_raise_max")
+    number = "_pump_flow_setpoint_raise_heating_circuit_1"
+    switch = "_automatic_flow_setpoint_raise_heating_circuit_1"
+    if set(bounds) & set(form_fields(open_circuit_form(token, entry_id, 1))):
+        raise SystemExit("The flow setpoint raise is offered before it is turned on")
+
+    write_sim(FLOW_SETPOINT_RAISE_HC1, 5)
+    write_sim(FLOW_SETPOINT_RAISE_HC2, 7)
+    write_sim(BUFFER_SENSOR, 452)
+    set_experimental(token, entry_id, flow_setpoint_raise=True)
+    state = wait_for_attribute(token, number, lambda s: s["state"] == "0.5")
+    if state["attributes"]["max"] != 3:
+        raise SystemExit(f"The raise doesn't have the default range: {state['attributes']}")
+    wait_for_attribute(token, switch, lambda s: s["state"] == "off")
+    wait_for_attribute(
+        token, "_suggested_flow_setpoint_raise_heating_circuit_1", lambda s: True
+    )
+    print("OK: once turned on, heating circuit 1 gets the raise and its adjustment")
+
+    # Heating circuit 2's raise, offered at its strategy 1, is now remembered.
+    write_sim(FLOW_SETPOINT_RAISE_HC2, 20)
+    if not set(bounds) <= set(form_fields(open_circuit_form(token, entry_id, 2))):
+        raise SystemExit("Heating circuit 2's raise range is not offered")
+    form = open_circuit_form(token, entry_id, 1)
+    if form["description_placeholders"].get("current_raise") != "0.5":
+        raise SystemExit(f"The current raise is not shown: {form['description_placeholders']}")
+    result = submit_form(
+        token, form, {"current_temp_source": "none", bounds[0]: 2.0, bounds[1]: 1.0}
+    )
+    if result.get("errors", {}).get("base") != "raise_bounds":
+        raise SystemExit(f"A lowest raise above the highest was accepted: {result}")
+    configure_circuit(
+        token, entry_id, 1, {"current_temp_source": "none", bounds[0]: 0.0, bounds[1]: 2.0}
+    )
+    wait_for_attribute(token, number, lambda s: s["attributes"].get("max") == 2)
+    state = wait_for_attribute(
+        token, switch, lambda s: s["attributes"].get("maximum") == 2.0
+    )
+    print("OK: the range set in the circuit applies to the raise and its adjustment")
+
+    number_id = entity_state(token, number)["entity_id"]
+    call_service(token, "number", "set_value", {"entity_id": number_id, "value": 1.3})
+    state = entity_state(token, number)
+    if state["state"] != "1.3":
+        raise SystemExit(f"The written value is not shown right away: {state}")
+    expect_sim(FLOW_SETPOINT_RAISE_HC1, 13)
+    wait_for_attribute(
+        token, number, lambda s: s["attributes"].get("change_pending") is False
+    )
+    print("OK: a written raise is shown right away and confirmed by the next poll")
+
+    set_experimental(token, entry_id, flow_setpoint_raise=False)
+    expect_sim(FLOW_SETPOINT_RAISE_HC1, 5)
+    expect_sim(FLOW_SETPOINT_RAISE_HC2, 7)
+    print("OK: turning the raise off restores the raises from before")
+
+    # Without a buffer sensor only the number entity.
+    write_sim(BUFFER_SENSOR, 0)
+    set_experimental(token, entry_id, flow_setpoint_raise=True)
+    wait_for_attribute(token, number, lambda s: s["state"] == "0.5")
+    if entity_state(token, switch)["state"] != "unavailable":
+        raise SystemExit("The automatic adjustment exists without a buffer sensor")
+    print("OK: without a buffer sensor, there is no suggestion or adjustment")
+    write_sim(BUFFER_SENSOR, 452)
+    set_experimental(token, entry_id, flow_setpoint_raise=True)
+    wait_for_attribute(token, switch, lambda s: s["state"] == "off")
+    write_sim(FLOW_SETPOINT_RAISE_HC1, 13)
+
+    # Only at strategies 0 and 1: saving the circuit at another one restores.
+    write_sim(STRATEGY_REGISTERS[1], 2)
+    form = open_circuit_form(token, entry_id, 1)
+    if set(bounds) & set(form_fields(form)):
+        raise SystemExit("The flow setpoint raise is offered at strategy 2")
+    result = submit_form(token, form, {"current_temp_source": "none"})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Options flow did not save: {result}")
+    if read_sim(FLOW_SETPOINT_RAISE_HC1) != 5:
+        raise SystemExit("The raise was not restored when the strategy changed")
+    wait_until_polling(token)
+    print("OK: the raise is only offered at strategies 0 and 1")
+    write_sim(STRATEGY_REGISTERS[1], 0)
+    configure_circuit(token, entry_id, 1, {"current_temp_source": "none"})
+    wait_for_attribute(token, number, lambda s: s["state"] == "0.5")
+    write_sim(FLOW_SETPOINT_RAISE_HC1, 13)
+
+    # Not with a buffer module.
+    write_sim(BUFFER_MODULE_TEMP, 452)
+    form = open_options_step(token, entry_id, "experimental")
+    if "experimental_flow_setpoint_raise" in form_fields(form):
+        raise SystemExit("The flow setpoint raise is offered with a buffer module")
+    result = submit_form(token, form, {})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Experimental functions were not saved: {result}")
+    if read_sim(FLOW_SETPOINT_RAISE_HC1) != 5:
+        raise SystemExit("The raise was not restored when a buffer module was found")
+    wait_until_polling(token)
+    print("OK: the raise is not offered with a buffer module")
+    write_sim(BUFFER_MODULE_TEMP, 0)
+    set_experimental(token, entry_id, flow_setpoint_raise=True)
+    wait_for_attribute(token, number, lambda s: s["state"] == "0.5")
+    write_sim(FLOW_SETPOINT_RAISE_HC1, 13)
+
+
+def set_experimental(token: str, entry_id: str, **functions: bool) -> None:
+    """Turns experimental functions on or off; the others stay as they are."""
+    form = open_options_step(token, entry_id, "experimental")
+    result = submit_form(
+        token, form, {f"experimental_{name}": on for name, on in functions.items()}
+    )
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Experimental functions were not saved: {result}")
+    wait_until_polling(token)
+
+
+def check_constant_control(token: str, entry_id: str) -> None:
+    climate = "climate.e2e_heat_pump_heating_circuit_1"
+    select = "select.e2e_heat_pump_constant_control_heating_circuit_1"
+    heating = "number.e2e_heat_pump_constant_heating_flow_setpoint_heating_circuit_1"
+    cooling = "number.e2e_heat_pump_constant_cooling_flow_setpoint_heating_circuit_1"
+    write_sim(STRATEGY_REGISTERS[1], 3)
+    write_sim(FLOW_MAX_HC1, 450)
+    write_sim(HEATING_CONSTANT_FLOW_HC1, 0)
+    write_sim(COOLING_FLOW_SETPOINT_HC1, 0)
+    form = open_circuit_form(token, entry_id, 1)
+    if "current_temp_source" in form_fields(form):
+        raise SystemExit("A room temperature source is offered at strategy 3")
+    result = submit_form(token, form, {})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Options flow did not save: {result}")
+    wait_until_polling(token)
+    wait_for_attribute(token, climate, lambda s: s["state"] == "unavailable")
+    states = {s["entity_id"] for s in request("GET", "/api/states", token=token)}
+    if select in states:
+        raise SystemExit("Constant control is offered before it is turned on")
+    print("OK: strategy 3 without constant control has no climate entity")
+
+    set_experimental(token, entry_id, constant_control=True, cooling=False)
+    state = wait_for_attribute(token, select, lambda s: s["state"] == "off")
+    if state["attributes"]["options"] != ["heat", "off"]:
+        raise SystemExit(f"Cooling is offered without its option: {state['attributes']}")
+    state = wait_for_attribute(token, heating, lambda s: s["state"] == "35.0")
+    if state["attributes"]["min"] != 20 or state["attributes"]["max"] != 45:
+        raise SystemExit(f"Heating flow range is wrong: {state['attributes']}")
+    wait_for_attribute(token, climate, lambda s: s["state"] == "unavailable")
+    states = {s["entity_id"] for s in request("GET", "/api/states", token=token)}
+    if cooling in states:
+        raise SystemExit("The cooling flow setpoint exists without its option")
+    print("OK: constant control replaces the climate entity once turned on")
+
+    set_experimental(token, entry_id, cooling=True)
+    state = wait_for_attribute(token, select, lambda s: s["state"] == "off")
+    if state["attributes"]["options"] != ["heat", "off", "cool"]:
+        raise SystemExit(f"Cooling is not offered: {state['attributes']}")
+    wait_for_attribute(token, cooling, lambda s: s["state"] == "20.0")
+    print("OK: cooling is offered with its own option")
+
+    call_service(token, "select", "select_option", {"entity_id": select, "option": "heat"})
+    state = entity_state(token, select)
+    if state["state"] != "heat" or state["attributes"]["change_pending"] is not True:
+        raise SystemExit(f"The chosen mode is not shown right away: {state}")
+    time.sleep(5)
+    if read_sim(HEATING_CONSTANT_FLOW_HC1) != 0:
+        raise SystemExit("The heating setpoint was written without a pause")
+    expect_sim(HEATING_CONSTANT_FLOW_HC1, 350, timeout=30)
+    if read_sim(COOLING_FLOW_SETPOINT_HC1) != 0:
+        raise SystemExit("The cooling setpoint is not 0 while heating")
+    wait_for_attribute(
+        token,
+        select,
+        lambda s: s["state"] == "heat" and s["attributes"]["change_pending"] is False,
+    )
+    print("OK: heating writes cooling 0 first and the heating setpoint after a pause")
+
+    call_service(token, "number", "set_value", {"entity_id": heating, "value": 40})
+    expect_sim(HEATING_CONSTANT_FLOW_HC1, 400)
+    call_service(token, "number", "set_value", {"entity_id": cooling, "value": 21})
+    time.sleep(3)
+    if read_sim(COOLING_FLOW_SETPOINT_HC1) != 0:
+        raise SystemExit("The cooling setpoint was written while heating")
+    if entity_state(token, cooling)["state"] != "21.0":
+        raise SystemExit("The cooling setpoint was not kept")
+    print("OK: only the setpoint of the active mode is written")
+
+    write_sim(HEATING_CONSTANT_FLOW_HC1, 380)
+    wait_for_attribute(token, heating, lambda s: s["state"] == "38.0")
+    print("OK: a setpoint changed on the controller is taken over")
+
+    call_service(token, "select", "select_option", {"entity_id": select, "option": "cool"})
+    expect_sim(HEATING_CONSTANT_FLOW_HC1, 0)
+    expect_sim(COOLING_FLOW_SETPOINT_HC1, 210, timeout=30)
+    wait_for_attribute(
+        token,
+        select,
+        lambda s: s["state"] == "cool" and s["attributes"]["change_pending"] is False,
+    )
+    print("OK: cooling writes heating 0 first and the cooling setpoint after a pause")
+
+    write_sim(HEATING_CONSTANT_FLOW_HC1, 300)
+    wait_for_attribute(token, select, lambda s: s["state"] == "unknown")
+    print("OK: both setpoints above 0 are shown as unknown")
+
+    call_service(token, "select", "select_option", {"entity_id": select, "option": "off"})
+    expect_sim(HEATING_CONSTANT_FLOW_HC1, 0)
+    expect_sim(COOLING_FLOW_SETPOINT_HC1, 0)
+    wait_for_attribute(token, select, lambda s: s["state"] == "off")
+    if entity_state(token, heating)["state"] != "38.0":
+        raise SystemExit("Off changed the kept heating setpoint")
+    print("OK: off writes both setpoints 0 and keeps them")
+
+    write_sim(STRATEGY_REGISTERS[1], 0)
+    configure_circuit(token, entry_id, 1, {"current_temp_source": "none"})
+    wait_until_polling(token)
+    set_experimental(token, entry_id, constant_control=False, cooling=False)
+    wait_for_attribute(token, climate, lambda s: s["state"] != "unavailable")
+
+
+def check_room_influence_off(token: str, entry_id: str) -> None:
+    configure_circuit(
+        token,
+        entry_id,
+        1,
+        {
+            "current_temp_source": "entity_write",
+            "current_temp_entity_id": SOURCE_ENTITY,
+            "room_influence": True,
+        },
+    )
+    expect_sim(STRATEGY_REGISTERS[1], 1)
+    wait_until_polling(token)
+    form = open_options_step(token, entry_id, "experimental")
+    result = submit_form(token, form, {"experimental_room_influence": False})
+    if result.get("errors", {}).get("base") != "room_influence_sending":
+        raise SystemExit(f"Room influence was turned off while sending: {result}")
+    if result["description_placeholders"].get("circuits") != "1":
+        raise SystemExit(f"The sending circuits are not named: {result}")
+    print("OK: room influence can't be turned off while a circuit sends")
+
+    configure_circuit(
+        token, entry_id, 1, {"current_temp_source": "none", "room_influence": False}
+    )
+    expect_sim(STRATEGY_REGISTERS[1], 0)
+    wait_until_polling(token)
+    # Heating circuit 2: room influence switched on by the integration, with
+    # the controller's own room sensor.
+    if read_sim(STRATEGY_REGISTERS[2]) != 1:
+        raise SystemExit("Heating circuit 2 is not on room influence")
+    form = open_options_step(token, entry_id, "experimental")
+    confirm = submit_form(token, form, {"experimental_room_influence": False})
+    if confirm.get("step_id") != "confirm_room_influence_off":
+        raise SystemExit(f"Setting the strategy back was not confirmed: {confirm}")
+    if confirm["description_placeholders"].get("circuits") != "2":
+        raise SystemExit(f"The circuits to set back are not named: {confirm}")
+    if read_sim(STRATEGY_REGISTERS[2]) != 1:
+        raise SystemExit("The strategy was set back before the confirmation")
+    result = submit_form(token, confirm, {})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Confirming did not save: {result}")
+    if read_sim(STRATEGY_REGISTERS[2]) != 0:
+        raise SystemExit("The strategy was not set back before saving")
+    wait_until_polling(token)
+    if "room_influence" in form_fields(open_circuit_form(token, entry_id, 2)):
+        raise SystemExit("Room influence is offered after turning it off")
+    print("OK: turning room influence off sets back the strategies it changed")
+    set_experimental(token, entry_id, room_influence=True)
+
+
+def check_presence(token: str, entry_id: str) -> None:
+    form = open_options_step(token, entry_id, "general")
+    fields = form_fields(form)
+    if fields["heating_circuit_3_present"].get("default") is not True:
+        raise SystemExit(f"Heating circuit 3 was not detected: {fields}")
+    if fields["dhw_present"].get("default") is not True:
+        raise SystemExit(f"Domestic hot water was not detected: {fields}")
+    result = submit_form(
+        token, form, {"heating_circuit_3_present": False, "dhw_present": False}
+    )
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"General options were not saved: {result}")
+    wait_until_polling(token)
+    wait_for_attribute(
+        token, "climate.e2e_heat_pump_heating_circuit_3", lambda s: s["state"] == "unavailable"
+    )
+    wait_for_attribute(token, "water_heater.e2e_heat_pump_water_heater", lambda s: s["state"] == "unavailable")
+    menu = request(
+        "POST", "/api/config/config_entries/options/flow", body={"handler": entry_id}, token=token
+    )
+    if "heating_circuit_3" in menu["menu_options"]:
+        raise SystemExit(f"An absent heating circuit is in the menu: {menu}")
+    print("OK: a heating circuit or hot water that isn't there gets no entities")
+
+    set_general = open_options_step(token, entry_id, "general")
+    submit_form(
+        token, set_general, {"heating_circuit_3_present": True, "dhw_present": True}
+    )
+    wait_until_polling(token)
+    wait_for_attribute(
+        token, "climate.e2e_heat_pump_heating_circuit_3", lambda s: s["state"] != "unavailable"
+    )
+    wait_for_attribute(token, "water_heater.e2e_heat_pump_water_heater", lambda s: s["state"] != "unavailable")
+
 
 def check_removal(token: str, entry_id: str) -> None:
+    # Heating circuit 3 cools at strategy 4; removing leaves cooling on.
+    set_experimental(token, entry_id, cooling=True)
+    write_sim(STRATEGY_REGISTERS[3], 4)
+    configure_circuit(
+        token, entry_id, 3, {"current_temp_source": "none", "room_influence": False}
+    )
+    wait_until_polling(token)
+    write_sim(COOLING_FLOW_SETPOINT_HC3, 200)
+    write_sim(FLOW_SETPOINT_RAISE_HC2, 25)
     configure_circuit(
         token,
         entry_id,
@@ -621,19 +1007,37 @@ def check_removal(token: str, entry_id: str) -> None:
     )
     expect_sim(ROOM_REGISTERS[1], 230)
     expect_sim(STRATEGY_REGISTERS[1], 1)
+    form = open_circuit_form(token, entry_id, 1)
+    result = submit_form(
+        token, form, {"current_temp_source": "none", "room_influence": True}
+    )
+    if result.get("errors", {}).get("base") != "room_influence_without_temperature":
+        raise SystemExit(f"Stopping to send with room influence on was accepted: {result}")
+    if read_sim(ROOM_REGISTERS[1]) != 230:
+        raise SystemExit("The room temperature was reset although saving was refused")
+    print("OK: stopping to send while room influence stays on is refused")
     request("DELETE", f"/api/config/config_entries/entry/{entry_id}", token=token)
     expect_sim(ROOM_REGISTERS[1], 0)
     expect_sim(STRATEGY_REGISTERS[1], 0)
     expect_sim(STRATEGY_REGISTERS[2], 0)
-    expect_sim(STRATEGY_REGISTERS[3], 0)
+    if read_sim(COOLING_FLOW_SETPOINT_HC3) != 200:
+        raise SystemExit("Removal turned cooling off")
+    if read_sim(STRATEGY_REGISTERS[3]) != 4:
+        raise SystemExit("Removal changed a strategy the integration didn't set")
     if read_sim(ROOM_REGISTERS[2]) != 200:
         raise SystemExit("Removal overwrote the value of a physical room sensor")
+    expect_sim(FLOW_SETPOINT_RAISE_HC1, 5)
+    expect_sim(FLOW_SETPOINT_RAISE_HC2, 7)
     print("OK: removing the integration resets what it changed")
 
 
 def main() -> None:
     wait_for_home_assistant()
     token = onboard()
+    # Heating circuits 2 and 3 and domestic hot water are detected by a
+    # temperature other than 0.
+    for address in (*FLOW_TEMP_REGISTERS.values(), DHW_TEMP):
+        write_sim(address, 350)
     entry_id = add_integration(token)
     states = wait_for_states(token)
     check(states)
@@ -643,6 +1047,10 @@ def main() -> None:
     check_reading_room_sensor(token, entry_id)
     check_sensor_detection(token, entry_id)
     check_cooling(token, entry_id)
+    check_flow_setpoint_raise(token, entry_id)
+    check_constant_control(token, entry_id)
+    check_room_influence_off(token, entry_id)
+    check_presence(token, entry_id)
     check_removal(token, entry_id)
 
 

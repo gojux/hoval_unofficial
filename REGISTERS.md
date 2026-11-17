@@ -10,6 +10,9 @@ high word first.
 
 ## Columns
 
+- **Datapoint (Hoval):** the name in the German sheet of the datapoint
+  list. The list's English sheet has the same addresses, but its names are
+  partly untranslated.
 - **Access:** as stated in the datapoint list. `R` = read only, `R/W` =
   readable and writable. Every register in the list is readable; there are
   no write-only registers.
@@ -75,8 +78,10 @@ Addresses for heating circuits 1 / 2 / 3.
 | 27531 / 27532 / 27533 | Smart Grid offset cooling | SmartGrid Offset Raum-Sollw. Kühlen | S16 | 0.1 K | R/W | – | – |
 | 29435 / 29436 / 29437 | Minimum cooling flow temperature | Vorlaufminimaltemp. Kühlen | S16 | 0.1 | R/W | y | – |
 | 30684 / 30685 / 30686 | Flow setpoint raise (`flow_setpoint_raise_hc1`–`3`) | WEZ Überhöhung/Abschlag VL-Sollwert | S16 | 0.1 K | R/W | y | – |
+| 30690 / 30691 / 30692 | Maximum flow temperature (upper bound of the constant heating flow setpoint) | Vorlauf Maximaltemp. | S16 | 0.1 | R/W | y² | – |
 
 ¹ Reading checked, writing not yet.
+² Not written by the integration.
 
 ## Domestic hot water
 
@@ -95,11 +100,29 @@ Addresses for heating circuits 1 / 2 / 3.
 |---|---|---|---|---|---|---|
 | 27545 | `smart_grid_mode` | Smart Grid über Systembus | U8 | enum | R/W | y |
 | 27546 | `smart_grid_trigger` | Auslöser Smart Grid Funktion | U8 | enum | R/W | y |
-| 28839 | `smart_grid_offset_buffer_heating` | Smart-Grid (Offset) Puffer-Soll.Heizen | S16 | 0.1 K | R/W | n² |
-| 28840 | `smart_grid_offset_buffer_cooling` | Smart-Grid (Offset) Puffer-Soll.Kühlen | S16 | 0.1 K | R/W | – |
+| 28837 | `smart_grid_offset_buffer_142_heating` | Smart-Grid (Offset) Puffer-Soll.Heizen (PS UnitId 142) | S16 | 0.1 K | R/W | – |
+| 28838 | `smart_grid_offset_buffer_142_cooling` | Smart-Grid (Offset) Puffer-Soll.Kühlen (PS UnitId 142) | S16 | 0.1 K | R/W | – |
+| 28839 | `smart_grid_offset_buffer_heating` | Smart-Grid (Offset) Puffer-Soll.Heizen (PS UnitId 143) | S16 | 0.1 K | R/W | n³ |
+| 28840 | `smart_grid_offset_buffer_cooling` | Smart-Grid (Offset) Puffer-Soll.Kühlen (PS UnitId 143) | S16 | 0.1 K | R/W | – |
 
-² On an installation without a buffer module (PS), the controller answers
-with "illegal data address" (Modbus exception 0x02), see 28839/28840 below.
+³ On an installation without a buffer module (PS), the controller answers
+with "illegal data address" (Modbus exception 0x02), see
+[Differences from Hoval's documentation](#differences-from-hovals-documentation).
+The buffer offsets are therefore only offered while their module is found
+(see [Buffer module detection](#buffer-module-detection)); the cooling
+offsets of the heating circuits (27531–27533) only at strategy 3, 4 or 5.
+
+## Buffer module detection
+
+Read when the integration starts and when the experimental functions are
+opened. A value other than 0 within -20 to 110 °C means the heat pump has a
+buffer module (PS); then the flow setpoint raise isn't offered (Hoval). An
+error response or 0 means there is none. These registers belong to the
+buffer modules PS UnitId 142 and 143, not to the heat generator.
+
+| Address | Datapoint (Hoval) | Type | Scale | Access | Verified |
+|---|---|---|---|---|---|
+| 17324 / 17386 | Puffer PF/KPF2 Ist (PS UnitId 142 / 143) | S16 | 0.1 | R | – |
 
 ## Other registers checked on a real installation
 
@@ -137,7 +160,10 @@ follows the installation.
   16 bits, so negative positions read correctly as signed 16-bit values.
 - **1490–1492** (constant flow setpoint heating): the list gives a range of
   10.0–110.0 °C, but according to Hoval the value must be 0 while a circuit
-  cools with control strategy 4 or 5.
+  cools with control strategy 4 or 5. With constant control (strategy 3),
+  1490–1492 and 19482/23755/23756 decide the mode: heating while only the
+  heating setpoint is above 0, cooling while only the cooling setpoint is,
+  off while both are 0 (Hoval).
 - **28839/28840** (Smart Grid offset buffer): the guideline names these
   addresses, while the datapoint list assigns them to buffer module PS
   UnitId 143. On an installation without a PS module (buffer sensor WPF on

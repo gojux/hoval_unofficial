@@ -40,39 +40,42 @@
           "general": "General",
           "heating_circuit_1": "Heating circuit 1",
           "heating_circuit_2": "Heating circuit 2",
-          "heating_circuit_3": "Heating circuit 3"
+          "heating_circuit_3": "Heating circuit 3",
+          "experimental": "Experimental functions"
         }
       },
       "general": {
         "title": "General",
         "data": {
           "scan_interval": "Polling interval (seconds)",
-          "timeout": "Modbus request timeout (seconds)"
+          "timeout": "Modbus request timeout (seconds)",
+          "heating_circuit_2_present": "Heating circuit 2 present",
+          "heating_circuit_3_present": "Heating circuit 3 present",
+          "dhw_present": "Domestic hot water present"
         },
         "data_description": {
           "scan_interval": "20 seconds or less recommended: the Hoval gateway drops connections that are idle for longer, and every poll after that takes several seconds longer.",
-          "timeout": "Default: 3 s (also when emptied). Other integrations using the same gateway share the connection; the longest timeout any of them asks for applies."
+          "timeout": "Default: 3 s. If several integrations share the gateway, the longest timeout applies.",
+          "heating_circuit_2_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
+          "heating_circuit_3_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
+          "dhw_present": "Without it, the integration neither creates its entities nor reads or writes its values."
         }
       },
       "circuit": {
         "title": "Heating circuit {circuit}",
-        "description": "Current control strategy: {strategy}\nRoom temperature on the controller: {room_temperature} °C (0 means no value)\n\nA Home Assistant entity can only be sent to the controller if no room sensor of its own is connected to it and its control strategy is \"Weather-compensated\" or \"Weather-compensated with room influence\".",
+        "description": "Current control strategy: {strategy}\nRoom temperature on the controller: {room_temperature} °C (0 means no value)",
         "data": {
           "current_temp_source": "Room temperature source",
           "current_temp_entity_id": "Room temperature entity",
-          "room_influence": "Include room sensor in control strategy"
+          "room_influence": "Include room sensor in control strategy",
+          "flow_setpoint_raise_min": "Lowest flow setpoint raise",
+          "flow_setpoint_raise_max": "Highest flow setpoint raise"
         },
         "data_description": {
           "current_temp_entity_id": "Only needed for the sources that use a Home Assistant entity.",
-          "room_influence": "On: \"Weather-compensated with room influence\", the controller takes the room temperature into account. Off: \"Weather-compensated\". To correct the flow temperature, the controller's parameter \"Room temperature compensation\" (03-007) must also be set above 0 on the operating module (service access)."
-        }
-      },
-      "confirm_room_influence": {
-        "title": "Heating circuit {circuit}: no room temperature",
-        "description": "No room sensor was detected on the controller and no value is being sent to it. The control strategy only works as intended if a room sensor is connected to the controller, e.g. one that was retrofitted.",
-        "menu_options": {
-          "confirm_room_influence_yes": "A room sensor is connected: include it in the control strategy",
-          "confirm_room_influence_no": "Go back"
+          "room_influence": "Switches to the control strategy with room influence. Needs a room temperature (room sensor or a sent entity). The flow temperature is only corrected if \"Room temperature compensation\" (03-007) on the operating module is above 0.",
+          "flow_setpoint_raise_min": "Currently on the controller: {current_raise} K. Lower bound of the raise, also for its automatic adjustment.",
+          "flow_setpoint_raise_max": "Upper bound of the raise, also for its automatic adjustment."
         }
       },
       "confirm_risks": {
@@ -81,6 +84,30 @@
         "data": {
           "accept_risks": "I have read these notes and want to continue"
         }
+      },
+      "experimental": {
+        "title": "Experimental functions",
+        "description": "These functions are still being tested on few installations. They can make the heat pump run less efficiently or the rooms get too cold or too warm, so keep an eye on them after turning one on. Some of them are then set up in a heating circuit's form.",
+        "data": {
+          "experimental_cooling": "Cooling",
+          "experimental_room_influence": "Room influence",
+          "experimental_flow_setpoint_raise": "Flow setpoint raise",
+          "experimental_constant_control": "Constant control (strategy 3)"
+        },
+        "data_description": {
+          "experimental_cooling": "Enables cooling for heating circuits whose control strategy includes it. Only turn on if the installation can cool.",
+          "experimental_room_influence": "Lets you switch room influence on or off per heating circuit and send a room temperature from Home Assistant to the controller.",
+          "experimental_flow_setpoint_raise": "Lets you raise the heat pump's flow temperature above the heating circuit's, for heating circuit 1 with a suggestion and automatic adjustment.",
+          "experimental_constant_control": "Controls heating circuits on constant control through a heating / off / cooling select and fixed flow temperatures."
+        }
+      },
+      "confirm_cooling_off": {
+        "title": "Turn cooling off",
+        "description": "Heating circuit(s) {circuits} currently cool. Saving turns their cooling off and checks it; only then is it saved.\n\nClose this dialog to change nothing."
+      },
+      "confirm_room_influence_off": {
+        "title": "Turn room influence off",
+        "description": "For heating circuit(s) {circuits}, the control strategy is set back to its value from before room influence and checked; only then is it saved.\n\nClose this dialog to change nothing."
       }
     },
     "error": {
@@ -88,11 +115,14 @@
       "entity_unavailable": "This entity currently has no usable temperature (5 to 40 °C).",
       "strategy_not_writable": "The current state of the controller does not allow sending a value.",
       "write_failed": "Writing to the controller failed. Check the log for details.",
-      "risks_not_accepted": "Confirm the notes to continue."
+      "risks_not_accepted": "Confirm the notes to continue.",
+      "raise_bounds": "The lowest raise must not be above the highest.",
+      "room_influence_without_temperature": "Room influence needs a room temperature: connect a room sensor, send an entity, or turn room influence off.",
+      "room_influence_sending": "Heating circuit(s) {circuits} still send a room temperature to the controller. Change their room temperature source first."
     },
     "abort": {
       "not_loaded": "The integration is not running. Check the connection to the controller.",
-      "cannot_read": "Could not read the heating circuit's values from the controller."
+      "cannot_read": "Could not read the values from the controller."
     }
   },
   "selector": {
@@ -171,6 +201,14 @@
           "locked": "Locked",
           "forced_consumption": "Forced consumption"
         }
+      },
+      "constant_mode": {
+        "name": "Constant control heating circuit {circuit}",
+        "state": {
+          "heat": "Heating",
+          "off": "Off",
+          "cool": "Cooling"
+        }
       }
     },
     "number": {
@@ -205,13 +243,25 @@
         "name": "Smart Grid offset DHW"
       },
       "smart_grid_offset_buffer_heating": {
-        "name": "Smart Grid offset buffer (heating)"
+        "name": "Smart Grid Offset Buffer module 143 Heating"
       },
       "smart_grid_offset_buffer_cooling": {
-        "name": "Smart Grid offset buffer (cooling)"
+        "name": "Smart Grid Offset Buffer module 143 Cooling"
       },
       "cooling_flow_setpoint": {
         "name": "Cooling flow setpoint heating circuit {circuit}"
+      },
+      "constant_heating_flow": {
+        "name": "Constant heating flow setpoint heating circuit {circuit}"
+      },
+      "constant_cooling_flow": {
+        "name": "Constant cooling flow setpoint heating circuit {circuit}"
+      },
+      "smart_grid_offset_buffer_142_heating": {
+        "name": "Smart Grid Offset Buffer module 142 Heating"
+      },
+      "smart_grid_offset_buffer_142_cooling": {
+        "name": "Smart Grid Offset Buffer module 142 Cooling"
       }
     },
     "sensor": {
@@ -376,6 +426,9 @@
       "heat_pump_circulation_pump_speed": {
         "name": "Heat pump circulation pump speed"
       },
+      "flow_setpoint_raise_suggestion_hc1": {
+        "name": "Suggested flow setpoint raise heating circuit 1"
+      },
       "operating_hours_heat_generator_above_50": {
         "name": "Operating hours heat generator >50%"
       },
@@ -405,6 +458,29 @@
       },
       "operating_hours_heat_generator": {
         "name": "Operating hours heat generator"
+      },
+      "flow_temp_hc2": {
+        "name": "Current flow temperature HC2"
+      },
+      "supply_target_temp_hc2": {
+        "name": "Supply target temperature HC2"
+      },
+      "mixing_valve_hc2": {
+        "name": "Mixing valve HC2"
+      },
+      "flow_temp_hc3": {
+        "name": "Current flow temperature HC3"
+      },
+      "supply_target_temp_hc3": {
+        "name": "Supply target temperature HC3"
+      },
+      "mixing_valve_hc3": {
+        "name": "Mixing valve HC3"
+      }
+    },
+    "switch": {
+      "flow_setpoint_raise_auto_hc1": {
+        "name": "Automatic flow setpoint raise heating circuit 1"
       }
     }
   },
