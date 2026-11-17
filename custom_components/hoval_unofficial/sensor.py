@@ -10,10 +10,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONTROLLER_ERROR_MAP,
+    CONTROLLER_ERROR_OPTIONS,
+    CONTROLLER_ERROR_REGISTER,
+    CONTROLLER_ERROR_UNKNOWN,
     CONTROL_STRATEGY_MAP,
     CONTROL_STRATEGY_OPTIONS,
     CONTROL_STRATEGY_UNKNOWN,
     DOMAIN,
+    HEATING_CIRCUIT_STATUS_MAP,
+    HEATING_CIRCUIT_STATUS_OPTIONS,
+    HEATING_CIRCUIT_STATUS_UNKNOWN,
     HEATING_CIRCUITS,
     HeatingCircuit,
     SENSOR_REGISTERS,
@@ -41,11 +48,17 @@ async def async_setup_entry(
         HovalSensor(coordinator, entry, reg) for reg in SENSOR_REGISTERS
     ]
     entities.append(HovalStatusSensor(coordinator, entry))
+    entities.append(HovalControllerErrorSensor(coordinator, entry))
     entities.append(HovalSmartGridStatusSensor(coordinator, entry))
     entities.extend(
         HovalControlStrategySensor(coordinator, entry, hc)
         for hc in HEATING_CIRCUITS
         if hc.control_strategy_reg is not None
+    )
+    entities.extend(
+        HovalHeatingCircuitStatusSensor(coordinator, entry, hc)
+        for hc in HEATING_CIRCUITS
+        if hc.status_reg is not None
     )
     async_add_entities(entities)
 
@@ -135,6 +148,46 @@ class HovalStatusSensor(
         return {"raw_status_code": int(raw_code)}
 
 
+class HovalControllerErrorSensor(
+    CoordinatorEntity[HovalModbusCoordinator], SensorEntity
+):
+    """The controller's error code as a translated enum: "no error" for 255,
+    the warning number (e.g. W11) for listed codes, and "unknown error" for
+    codes that aren't documented. The raw code is exposed as an attribute."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = CONTROLLER_ERROR_REGISTER.key
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = CONTROLLER_ERROR_OPTIONS
+
+    def __init__(
+        self, coordinator: HovalModbusCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator, context=[CONTROLLER_ERROR_REGISTER.key])
+        self._attr_unique_id = f"{entry.entry_id}_{CONTROLLER_ERROR_REGISTER.key}"
+        self._attr_entity_registry_enabled_default = CONTROLLER_ERROR_REGISTER.enabled_default
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Hoval (Modbus)",
+            model="Heat Pump Controller",
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        raw_code = self.coordinator.data.get(CONTROLLER_ERROR_REGISTER.key)
+        if raw_code is None:
+            return None
+        return CONTROLLER_ERROR_MAP.get(int(raw_code), CONTROLLER_ERROR_UNKNOWN)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, int] | None:
+        raw_code = self.coordinator.data.get(CONTROLLER_ERROR_REGISTER.key)
+        if raw_code is None:
+            return None
+        return {"raw_error_code": int(raw_code)}
+
+
 class HovalSmartGridStatusSensor(
     CoordinatorEntity[HovalModbusCoordinator], SensorEntity
 ):
@@ -213,3 +266,56 @@ class HovalControlStrategySensor(
         if raw_value is None:
             return None
         return CONTROL_STRATEGY_MAP.get(int(raw_value), CONTROL_STRATEGY_UNKNOWN)
+
+
+class HovalHeatingCircuitStatusSensor(
+    CoordinatorEntity[HovalModbusCoordinator], SensorEntity
+):
+    """A heating circuit's control status (e.g. normal heating, frost
+    protection, Smart Grid preferred operation), as a translated diagnostic
+    enum. Disabled by default. Raw values outside HEATING_CIRCUIT_STATUS_MAP
+    are reported as HEATING_CIRCUIT_STATUS_UNKNOWN; the raw value is always
+    exposed as an attribute."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "heating_circuit_status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = HEATING_CIRCUIT_STATUS_OPTIONS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: HovalModbusCoordinator,
+        entry: ConfigEntry,
+        heating_circuit: HeatingCircuit,
+    ) -> None:
+        reg = heating_circuit.status_reg
+        super().__init__(coordinator, context=[reg.key])
+        self._reg = reg
+        self._attr_unique_id = f"{entry.entry_id}_{reg.key}"
+        self._attr_translation_placeholders = {
+            "circuit": heating_circuit.key.removeprefix("heating_circuit_")
+        }
+        self._attr_entity_registry_enabled_default = reg.enabled_default
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Hoval (Modbus)",
+            model="Heat Pump Controller",
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        raw_value = self.coordinator.data.get(self._reg.key)
+        if raw_value is None:
+            return None
+        return HEATING_CIRCUIT_STATUS_MAP.get(
+            int(raw_value), HEATING_CIRCUIT_STATUS_UNKNOWN
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, int] | None:
+        raw_value = self.coordinator.data.get(self._reg.key)
+        if raw_value is None:
+            return None
+        return {"raw_status_code": int(raw_value)}

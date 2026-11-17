@@ -31,10 +31,9 @@ adapting this integration to a different heat pump model, see
 
 ## Requirements
 
-This integration requires `pymodbus` version `3.11.0` or newer (`3.10.0`
-had known issues and is excluded), which Home Assistant installs
-automatically. If you're on an older, manually managed Python
-environment, make sure `pymodbus>=3.11.0` is installed.
+Home Assistant 2026.9 or newer. The integration uses Home Assistant's
+built-in Modbus connection, so no extra Python packages are needed and
+no Modbus YAML configuration is required.
 
 ## Installation
 
@@ -62,7 +61,7 @@ restart Home Assistant.
    - **IP address** of the controller
    - **Port** (default: 502)
    - **Modbus device ID** (default: 1)
-   - optional: polling interval in seconds
+   - optional: polling interval in seconds (default: 20)
 
 Home Assistant tests the connection directly during setup. If it fails,
 an error message is shown in the dialog.
@@ -76,8 +75,14 @@ entry's three-dot menu → **Reconfigure**.
   quantities, operating hours, COP, and a translated status sensor
   (shows the controller's current status as readable text in your HA
   language, e.g. "Heating mode" / "Defrost" / "Frost protection").
-  A diagnostic sensor per heating circuit shows its control strategy
-  (e.g. "Weather-compensated with room influence"); disabled by default.
+  The controller's error code is shown as text too ("No error" or the
+  warning number, e.g. "W11"). Two diagnostic sensors per heating circuit
+  show its control strategy (e.g. "Weather-compensated with room
+  influence") and its current status (e.g. "Normal heating" or "Smart Grid
+  preferred operation, heating"); both disabled by default. The heat
+  pump's flow rate and the speed of its circulation pump are available as
+  sensors too, also disabled by default; they help to check the hydraulics,
+  e.g. whether a heating circuit pumps more water than the heat pump.
 - **Domestic hot water (DHW)** — a `water_heater` entity showing tank
   temperature, target temperature, and operating mode.
 - **Room heating circuits (HC1/HC2/HC3)** — `climate` entities for up to
@@ -85,7 +90,13 @@ entry's three-dot menu → **Reconfigure**.
   additional circuits, enable HC2/HC3 under **Settings → Devices &
   Services → this integration → Entities** (they're created but hidden
   by default, since not everyone has more than one circuit).
-- **Smart Grid control** — two `select` entities and six `number` offset
+- **Flow setpoint raise** — one `number` entity per heating circuit
+  (disabled by default) for how much higher than the circuit's flow
+  setpoint the heat pump heats (0–10 K, while cooling: how much lower).
+  Raise it if the circuit doesn't reach its flow setpoint because the
+  water cools down or mixes on the way, e.g. in a buffer. The heat pump's
+  target temperature that results is rounded down to 0.5 K.
+- **Smart Grid control** — two `select` entities and nine `number` offset
   entities to drive the controller's Smart Grid ("preferred operation")
   function. Disabled by default; see
   [Using Smart Grid control](#using-smart-grid-control) below.
@@ -244,8 +255,17 @@ without any prior setup, others may not.
 
 Available under the entry's three-dot menu → **Configure**:
 
-- **Polling interval** (seconds) — how often the integration reads data
-  from the controller.
+- **Polling interval** (seconds, default 20) — how often the integration
+  reads data from the controller. Keep it at 20 seconds or less: the
+  gateway drops connections that are idle for longer (after about 20-30
+  seconds). The integration then reconnects on its own, but each such
+  poll takes several seconds longer.
+- **Modbus request timeout** (seconds, Home Assistant 2026.10 or newer)
+  — how long to wait for the gateway to answer (default: 3 seconds; on
+  Home Assistant 2026.9 its fixed 10 seconds apply). If other
+  integrations use the same gateway, the longest timeout any of them
+  asks for applies.
+  <!-- HA-COMPAT(2026.10): drop the version note. -->
 - **Room temperature source** — see above, configurable per heating
   circuit.
 

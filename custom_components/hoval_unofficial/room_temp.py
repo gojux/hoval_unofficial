@@ -28,8 +28,9 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import TemperatureConverter
 
-from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.exceptions import ModbusException
+from homeassistant.components import modbus
+from homeassistant.exceptions import HomeAssistantError
+from modbus_connection import ModbusError, ModbusTcpParams, ModbusUnit
 
 from .const import (
     CONF_DEVICE_ID,
@@ -357,11 +358,11 @@ class RoomTempWriter:
         }
 
 
-async def async_cleanup_removed_entry(entry: ConfigEntry) -> None:
+async def async_cleanup_removed_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Undoes what the integration changed on the controller, as far as possible.
 
-    Runs after the entry was unloaded, so it uses its own short-lived
-    connection. Failing here must not block removing the entry.
+    Runs after the entry was unloaded, so it uses a connection of its own for
+    the duration. Failing here must not block removing the entry.
     """
     circuits = [
         hc
@@ -373,44 +374,39 @@ async def async_cleanup_removed_entry(entry: ConfigEntry) -> None:
     if not circuits:
         return
 
-    device_id = entry.data[CONF_DEVICE_ID]
-    client = AsyncModbusTcpClient(entry.data[CONF_HOST], port=entry.data[CONF_PORT])
+    params = ModbusTcpParams(host=entry.data[CONF_HOST], port=entry.data[CONF_PORT])
     try:
-        for attempt in range(1, REMOVE_ATTEMPTS + 1):
-            try:
-                if not await client.connect():
-                    raise ModbusException("connection failed")
-                for hc in circuits:
-                    await _async_release_circuit(client, device_id, entry, hc)
-                return
-            except ModbusException as err:
-                if attempt == REMOVE_ATTEMPTS:
-                    _LOGGER.warning(
-                        "Could not reset the room temperature settings on the "
-                        "controller: %s",
-                        err,
-                    )
+        async with modbus.async_get_temporary_unit(
+            hass, params, entry.data[CONF_DEVICE_ID]
+        ) as unit:
+            for attempt in range(1, REMOVE_ATTEMPTS + 1):
+                try:
+                    for hc in circuits:
+                        await _async_release_circuit(unit, entry, hc)
                     return
-                client.close()
-                await asyncio.sleep(REMOVE_RETRY_SECONDS)
-    finally:
-        client.close()
+                except ModbusError as err:
+                    if attempt == REMOVE_ATTEMPTS:
+                        raise
+                    _LOGGER.debug("Resetting the controller failed, retrying: %s", err)
+                    await asyncio.sleep(REMOVE_RETRY_SECONDS)
+    except (ModbusError, HomeAssistantError) as err:
+        _LOGGER.warning(
+            "Could not reset the room temperature settings on the controller: %s",
+            err,
+        )
 
 
 async def _async_release_circuit(
-    client: AsyncModbusTcpClient,
-    device_id: int,
-    entry: ConfigEntry,
-    hc: HeatingCircuit,
+    unit: ModbusUnit, entry: ConfigEntry, hc: HeatingCircuit
 ) -> None:
-    strategy = int(await read_register(client, device_id, hc.control_strategy_reg))
+    strategy = int(await read_register(unit, hc.control_strategy_reg))
     if strategy not in CONTROL_STRATEGY_WRITABLE:
         return
     if (
         entry.options.get(current_temp_source_key(hc))
         == CURRENT_TEMP_SOURCE_ENTITY_WRITE
     ):
-        await write_register(client, device_id, hc.room_actual_temp_reg, 0)
+        await write_register(unit, hc.room_actual_temp_reg, 0)
     previous = entry.options.get(previous_strategy_key(hc))
     if previous is not None and strategy == CONTROL_STRATEGY_ROOM_INFLUENCE:
-        await write_register(client, device_id, hc.control_strategy_reg, previous)
+        await write_register(unit, hc.control_strategy_reg, previous)

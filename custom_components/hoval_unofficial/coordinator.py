@@ -1,17 +1,28 @@
 """DataUpdateCoordinator: handles the Modbus connection, polling and writes."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import struct
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from datetime import timedelta
 from typing import Any
 
+from homeassistant.components import modbus
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-
-from pymodbus.client import AsyncModbusTcpClient
-from pymodbus.exceptions import ModbusException
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusDesyncError,
+    ModbusError,
+    ModbusExceptionError,
+    ModbusTcpParams,
+    ModbusTimeoutError,
+    ModbusUnit,
+)
 
 from .const import (
     DataType,
@@ -38,6 +49,24 @@ ALL_REGISTERS: list[RegisterDef] = (
 
 # Modbus allows at most 125 registers per read request.
 MAX_BLOCK_REGISTERS = 125
+
+# Repeating a request after a transient error. The gateway stops answering
+# on a connection that has been idle for about 20-30 seconds and drops it
+# only a few requests later; just a new connection gets answers again.
+# - No answer in time or a late answer to an earlier request
+#   (FAILED_ANSWER_ERRORS) uses up one of REQUEST_ATTEMPTS. The connection
+#   is dropped right away, so the next try opens a new one instead of
+#   waiting on a connection that may be dead. The connection is shared with
+#   other integrations using the same gateway; theirs reconnect as well.
+# - A dropped connection (ModbusConnectionError) doesn't use up an attempt,
+#   so the request is still repeated on the new connection; at most
+#   MAX_LOST_CONNECTIONS times.
+# The controller's own error responses (ModbusExceptionError) are final and
+# not repeated.
+FAILED_ANSWER_ERRORS = (ModbusTimeoutError, ModbusDesyncError)
+REQUEST_ATTEMPTS = 3
+MAX_LOST_CONNECTIONS = 2
+RETRY_DELAY = 1.0  # seconds
 
 
 @dataclass(frozen=True)
@@ -128,38 +157,87 @@ def encode_value(value: float, data_type: DataType) -> list[int]:
     raise ValueError(f"Unknown data_type: {data_type}")
 
 
-async def read_register(
-    client: AsyncModbusTcpClient, device_id: int, reg: RegisterDef
-) -> float:
-    """Reads a single register's value. Raises ModbusException on failure."""
-    if reg.register_type == "holding":
-        result = await client.read_holding_registers(
-            reg.address, count=reg.register_count, device_id=device_id
-        )
+async def _drop_connection(unit: ModbusUnit) -> None:
+    """Drops the connection; the next request opens a new one."""
+    try:
+        await unit.disconnect()
+    except ModbusConnectionError as err:
+        # The connection is dropped regardless.
+        _LOGGER.debug("Dropping the connection failed: %s", err)
+
+
+async def _with_retries[T](
+    unit: ModbusUnit, request: Callable[[], Awaitable[T]], description: str
+) -> T:
+    """Runs a request, repeating it after transient errors (see
+    FAILED_ANSWER_ERRORS and MAX_LOST_CONNECTIONS above)."""
+    failed_answers = 0
+    lost_connections = 0
+    while True:
+        try:
+            return await request()
+        except FAILED_ANSWER_ERRORS as err:
+            failed_answers += 1
+            await _drop_connection(unit)
+            if failed_answers >= REQUEST_ATTEMPTS:
+                raise
+            _LOGGER.debug(
+                "%s failed (no answer %s of %s), retrying on a new connection: %s",
+                description,
+                failed_answers,
+                REQUEST_ATTEMPTS,
+                err,
+            )
+        except ModbusConnectionError as err:
+            lost_connections += 1
+            if lost_connections > MAX_LOST_CONNECTIONS:
+                raise
+            _LOGGER.debug(
+                "%s failed (connection lost %s of %s), retrying on a new connection: %s",
+                description,
+                lost_connections,
+                MAX_LOST_CONNECTIONS,
+                err,
+            )
+        await asyncio.sleep(RETRY_DELAY)
+
+
+async def read_registers(
+    unit: ModbusUnit, register_type: RegisterType, address: int, count: int
+) -> list[int]:
+    """Reads raw registers. Raises ModbusError on failure."""
+    if register_type == "holding":
+        request = partial(unit.read_holding_registers, address, count)
     else:
-        result = await client.read_input_registers(
-            reg.address, count=reg.register_count, device_id=device_id
-        )
-    if result.isError():
-        raise ModbusException(f"Error reading {reg.key}: {result}")
-    return decode_value(result.registers, reg.data_type) * reg.scale
+        request = partial(unit.read_input_registers, address, count)
+    return await _with_retries(unit, request, f"Reading {count} registers at {address}")
 
 
-async def write_register(
-    client: AsyncModbusTcpClient, device_id: int, reg: RegisterDef, value: float
-) -> None:
-    """Writes a holding register's value. Raises ModbusException on failure."""
+async def read_register(unit: ModbusUnit, reg: RegisterDef) -> float:
+    """Reads a single register's value. Raises ModbusError on failure."""
+    registers = await read_registers(
+        unit, reg.register_type, reg.address, reg.register_count
+    )
+    return decode_value(registers, reg.data_type) * reg.scale
+
+
+async def write_register(unit: ModbusUnit, reg: RegisterDef, value: float) -> None:
+    """Writes a holding register's value. Raises ModbusError on failure.
+
+    Repeating a write is safe: it sets the same value again."""
     registers = encode_value(value / reg.scale, reg.data_type)
     if len(registers) == 1:
-        result = await client.write_register(
-            reg.address, registers[0], device_id=device_id
-        )
+        request = partial(unit.write_register, reg.address, registers[0])
     else:
-        result = await client.write_registers(
-            reg.address, registers, device_id=device_id
-        )
-    if result.isError():
-        raise ModbusException(f"Error writing {reg.key}: {result}")
+        request = partial(unit.write_registers, reg.address, registers)
+    await _with_retries(unit, request, f"Writing {reg.key} at {reg.address}")
+
+
+# HA-COMPAT(2026.10): always true from 2026.10; remove and call
+# require_timeout unconditionally.
+def timeout_supported() -> bool:
+    """Whether Home Assistant's Modbus connection takes a request timeout."""
+    return hasattr(ModbusUnit, "require_timeout")
 
 
 class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
@@ -168,15 +246,18 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
     def __init__(
         self,
         hass: HomeAssistant,
+        entry: ConfigEntry,
         name: str,
         host: str,
         port: int,
         device_id: int,
         scan_interval: int,
+        timeout: float | None = None,
     ) -> None:
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=name,
             update_interval=timedelta(seconds=scan_interval),
         )
@@ -184,7 +265,14 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         self.host = host
         self.port = port
         self.device_id = device_id
-        self.client = AsyncModbusTcpClient(host, port=port)
+        # The connection is shared with other integrations using the same
+        # gateway and released by Home Assistant when the entry unloads.
+        self.unit = modbus.async_get_unit(
+            hass, entry, ModbusTcpParams(host=host, port=port), device_id
+        )
+        if timeout is not None and timeout_supported():
+            self.unit.require_timeout(timeout)
+            entry.async_on_unload(lambda: self.unit.require_timeout(None))
         # Heating circuit key -> RoomTempWriter (room_temp.py), for the
         # circuits sending a room temperature to the controller.
         self.room_temp_writers: dict[str, Any] = {}
@@ -192,14 +280,7 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         # (number.py), written when the circuit is set to cool (climate.py).
         self.cooling_flow_setpoints: dict[str, float] = {}
 
-    async def _ensure_connected(self) -> None:
-        if not self.client.connected:
-            await self.client.connect()
-        if not self.client.connected:
-            raise UpdateFailed(f"Could not connect to {self.host}:{self.port}")
-
     async def _async_update_data(self) -> dict[str, float]:
-        await self._ensure_connected()
         data: dict[str, float] = {}
 
         # Only poll registers a currently-subscribed entity actually needs.
@@ -226,60 +307,53 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
 
         for block in build_read_blocks(registers_to_poll):
             try:
-                result = await self._read_registers(
-                    block.register_type, block.address, block.count
-                )
-                if not result.isError():
-                    for reg in block.registers:
-                        offset = reg.address - block.address
-                        self._store_value(
-                            data, reg, result.registers[offset : offset + reg.register_count]
-                        )
-                    continue
-
-                if len(block.registers) > 1:
+                try:
+                    registers = await read_registers(
+                        self.unit, block.register_type, block.address, block.count
+                    )
+                except ModbusExceptionError as err:
+                    # The controller answered with an error code, e.g. for a
+                    # register it doesn't have.
+                    if len(block.registers) == 1:
+                        self._warn_unreadable(block.registers[0], err)
+                        continue
                     # Read the registers one by one so a single unreadable
                     # register doesn't hide the others in the block.
                     _LOGGER.debug(
                         "Block read at address %s (%s registers) failed: %s",
                         block.address,
                         block.count,
-                        result,
+                        err,
                     )
                     for reg in block.registers:
-                        single = await self._read_registers(
-                            reg.register_type, reg.address, reg.register_count
-                        )
-                        if single.isError():
-                            _LOGGER.warning(
-                                "Error reading %s (address %s): %s",
-                                reg.key,
+                        try:
+                            single = await read_registers(
+                                self.unit,
+                                reg.register_type,
                                 reg.address,
-                                single,
+                                reg.register_count,
                             )
+                        except ModbusExceptionError as single_err:
+                            self._warn_unreadable(reg, single_err)
                             continue
-                        self._store_value(data, reg, single.registers)
-                else:
-                    reg = block.registers[0]
-                    _LOGGER.warning(
-                        "Error reading %s (address %s): %s", reg.key, reg.address, result
-                    )
-
-            except ModbusException as err:
+                        self._store_value(data, reg, single)
+                    continue
+            except ModbusError as err:
                 raise UpdateFailed(
                     f"Modbus error while reading address {block.address}: {err}"
                 ) from err
 
+            for reg in block.registers:
+                offset = reg.address - block.address
+                self._store_value(
+                    data, reg, registers[offset : offset + reg.register_count]
+                )
+
         return data
 
-    async def _read_registers(self, register_type: RegisterType, address: int, count: int):
-        if register_type == "holding":
-            return await self.client.read_holding_registers(
-                address, count=count, device_id=self.device_id
-            )
-        return await self.client.read_input_registers(
-            address, count=count, device_id=self.device_id
-        )
+    @staticmethod
+    def _warn_unreadable(reg: RegisterDef, err: ModbusExceptionError) -> None:
+        _LOGGER.warning("Error reading %s (address %s): %s", reg.key, reg.address, err)
 
     @staticmethod
     def _store_value(data: dict[str, float], reg: RegisterDef, registers: list[int]) -> None:
@@ -287,10 +361,9 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
 
     async def async_read_value(self, reg: RegisterDef) -> float:
         """Reads a register directly, independent of what is being polled."""
-        await self._ensure_connected()
         try:
-            return await read_register(self.client, self.device_id, reg)
-        except ModbusException as err:
+            return await read_register(self.unit, reg)
+        except ModbusError as err:
             raise UpdateFailed(f"Modbus error while reading {reg.key}: {err}") from err
 
     async def async_write_value(
@@ -298,14 +371,10 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
     ) -> None:
         """Writes a value to a holding register and, unless told otherwise,
         refreshes the data afterwards."""
-        await self._ensure_connected()
         try:
-            await write_register(self.client, self.device_id, reg, value)
-        except ModbusException as err:
+            await write_register(self.unit, reg, value)
+        except ModbusError as err:
             raise UpdateFailed(f"Modbus error while writing {reg.key}: {err}") from err
 
         if refresh:
             await self.async_request_refresh()
-
-    async def async_close(self) -> None:
-        self.client.close()

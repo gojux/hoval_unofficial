@@ -46,7 +46,12 @@
       "general": {
         "title": "General",
         "data": {
-          "scan_interval": "Polling interval (seconds)"
+          "scan_interval": "Polling interval (seconds)",
+          "timeout": "Modbus request timeout (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "20 seconds or less recommended: the Hoval gateway drops connections that are idle for longer, and every poll after that takes several seconds longer.",
+          "timeout": "Default: 3 s (also when emptied). Other integrations using the same gateway share the connection; the longest timeout any of them asks for applies."
         }
       },
       "circuit": {
@@ -169,6 +174,15 @@
       }
     },
     "number": {
+      "flow_setpoint_raise_hc1": {
+        "name": "Flow setpoint raise heating circuit 1"
+      },
+      "flow_setpoint_raise_hc2": {
+        "name": "Flow setpoint raise heating circuit 2"
+      },
+      "flow_setpoint_raise_hc3": {
+        "name": "Flow setpoint raise heating circuit 3"
+      },
       "smart_grid_offset_hc1": {
         "name": "Smart Grid offset heating circuit 1"
       },
@@ -221,6 +235,38 @@
           "constant": "Constant control",
           "weather_compensated_cooling_constant": "Weather-compensated heating + constant cooling",
           "weather_compensated_room_influence_cooling_constant": "Weather-compensated heating with room influence + constant cooling",
+          "unknown": "Unknown"
+        }
+      },
+      "heating_circuit_status": {
+        "name": "Status heating circuit {circuit}",
+        "state": {
+          "switched_off": "Switched off",
+          "normal_heating": "Normal heating",
+          "comfort_heating": "Comfort heating",
+          "eco_heating": "Eco heating",
+          "frost_protection": "Frost protection",
+          "forced_consumption": "Forced consumption",
+          "forced_reduction": "Forced reduction",
+          "holiday": "Holiday",
+          "party": "Party",
+          "normal_cooling": "Normal cooling",
+          "comfort_cooling": "Comfort cooling",
+          "eco_cooling": "Eco cooling",
+          "fault": "Fault",
+          "manual": "Manual operation",
+          "cooling_protection": "Cooling protection",
+          "party_cooling": "Party cooling",
+          "screed_drying_heating_up": "Screed drying: heating-up phase",
+          "screed_drying_steady": "Screed drying: steady phase",
+          "screed_drying_cooling_down": "Screed drying: cool-down phase",
+          "screed_drying_final": "Screed drying: final phase",
+          "cooling_constant_demand": "Cooling, external/constant demand",
+          "heating_constant_demand": "Heating, external/constant demand",
+          "away_heating": "Away, heating",
+          "away_cooling": "Away, cooling",
+          "smart_grid_preferred_heating": "Smart Grid preferred operation, heating",
+          "smart_grid_preferred_cooling": "Smart Grid preferred operation, cooling",
           "unknown": "Unknown"
         }
       },
@@ -290,13 +336,45 @@
         "name": "Heat generator status code"
       },
       "controller_error_code": {
-        "name": "Error code from controller"
+        "name": "Error code from controller",
+        "state": {
+          "no_error": "No error",
+          "w11": "W11",
+          "w13": "W13",
+          "w17": "W17",
+          "w18": "W18",
+          "w19": "W19",
+          "w20": "W20",
+          "w21": "W21",
+          "w22": "W22",
+          "w23": "W23",
+          "w24": "W24",
+          "w25": "W25",
+          "w26": "W26",
+          "w27": "W27",
+          "w37": "W37",
+          "w38": "W38",
+          "w39": "W39",
+          "w40": "W40",
+          "w41": "W41",
+          "w43": "W43",
+          "w58": "W58",
+          "w59": "W59",
+          "w63": "W63",
+          "unknown_error": "Unknown error"
+        }
       },
       "return_temp_heat_generator": {
         "name": "Return temperature heat generator"
       },
       "modulation": {
         "name": "Modulation"
+      },
+      "heat_pump_flow_rate": {
+        "name": "Heat pump flow rate"
+      },
+      "heat_pump_circulation_pump_speed": {
+        "name": "Heat pump circulation pump speed"
       },
       "operating_hours_heat_generator_above_50": {
         "name": "Operating hours heat generator >50%"

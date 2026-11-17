@@ -120,7 +120,7 @@ class HovalWaterHeater(
                 SMART_GRID_MODE_REGISTER.key,
                 SMART_GRID_OFFSET_DHW_REGISTER.key,
                 # DHW_NORMAL_TARGET_TEMP_REGISTER / DHW_ECO_TARGET_TEMP_REGISTER
-                # intentionally excluded: both are write-only (used in
+                # intentionally excluded: both are only written (in
                 # async_set_temperature), never read for display --
                 # DHW_ACTUAL_TARGET_TEMP_REGISTER is the read-back register
                 # shown as target_temperature regardless of which of the
@@ -172,7 +172,7 @@ class HovalWaterHeater(
         return offset if offset is not None else 0.0
 
     def _target_temp_register_for_current_mode(self) -> RegisterDef | None:
-        """Which write-only setpoint register applies to the current
+        """Which setpoint register to write applies to the current
         operating mode, if any. "Off" and the two schedule programs
         (week 1/2) have no directly settable temperature and return None
         -- callers must handle that (see async_set_temperature())."""

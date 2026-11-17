@@ -16,7 +16,15 @@ CONF_DEVICE_ID = "device_id"
 DEFAULT_NAME = "Heat Pump"
 DEFAULT_PORT = 502
 DEFAULT_DEVICE_ID = 1
-DEFAULT_SCAN_INTERVAL = 30  # seconds
+# The Hoval gateway stops answering on a connection that has been idle for
+# about 20-30 seconds; a shorter interval keeps the connection alive.
+DEFAULT_SCAN_INTERVAL = 20  # seconds
+# Modbus request timeout, in seconds. A short timeout lets the retries
+# (coordinator.py) get past a dead connection quickly; the gateway answers
+# well within it.
+DEFAULT_TIMEOUT = 3.0
+MIN_TIMEOUT = 1.0
+MAX_TIMEOUT = 60.0
 
 RegisterType = Literal["holding", "input"]
 DataType = Literal["int16", "uint16", "int32", "uint32", "float32"]
@@ -153,7 +161,30 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         name="Modulation",
         address=18726,
         data_type="uint16",
+        precision=0,
         unit="%",
+    ),
+    # Registers of the heat pump's controller (WFA). The heat generator's own
+    # flow rate and pump speed registers (18741, 18740) read 0 on a heat pump.
+    RegisterDef(
+        key="heat_pump_flow_rate",
+        name="Heat pump flow rate",
+        address=31707,  # averaged
+        data_type="int32",
+        scale=0.1,
+        precision=1,
+        unit="L/min",
+        device_class="volume_flow_rate",
+        enabled_default=False,
+    ),
+    RegisterDef(
+        key="heat_pump_circulation_pump_speed",
+        name="Heat pump circulation pump speed",
+        address=27495,
+        data_type="int32",
+        precision=0,
+        unit="%",
+        enabled_default=False,
     ),
 
     # --- Heating circuit 1 diagnostics ---
@@ -181,6 +212,7 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         name="Mixing valve HC1",
         address=19658,
         data_type="int16",
+        precision=0,
         unit="%",
     ),
 
@@ -248,6 +280,7 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         name="Switching cycles heat generator",
         address=1518,
         data_type="uint32",
+        precision=0,
         state_class="total_increasing",
     ),
     RegisterDef(
@@ -255,6 +288,7 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         name="Switching cycles heat generator >50%",
         address=18729,
         data_type="uint32",
+        precision=0,
         state_class="total_increasing",
     ),
     RegisterDef(
@@ -262,6 +296,7 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         name="Operating hours heat generator",
         address=1507,  # same as 1516
         data_type="uint32",
+        precision=0,
         unit="h",
         state_class="total_increasing",
         device_class="duration",
@@ -271,18 +306,13 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         name="Operating hours heat generator >50%",
         address=18727,
         data_type="uint32",
+        precision=0,
         unit="h",
         state_class="total_increasing",
         device_class="duration",
     ),
 
-    # --- Diagnostics / status & error codes (least everyday-relevant) ---
-    RegisterDef(
-        key="controller_error_code",
-        name="Error code from controller",
-        address=1534,
-        data_type="uint16",
-    ),
+    # --- Diagnostics / status codes (least everyday-relevant) ---
     RegisterDef(
         key="heat_generator_status_code",
         name="Heat generator status code",
@@ -604,6 +634,46 @@ CONTROL_STRATEGY_OPTIONS: list[str] = [
     CONTROL_STRATEGY_UNKNOWN,
 ]
 
+# State of a heating circuit's control, e.g. whether Smart Grid preferred
+# operation currently acts on it. Exposed as a disabled-by-default
+# diagnostic enum sensor per circuit, see HeatingCircuit.status_reg.
+HEATING_CIRCUIT_STATUS_UNKNOWN = "unknown"
+
+# Raw register value -> enum sensor state, as listed in Hoval's Modbus
+# guideline. Unlisted values fall back to HEATING_CIRCUIT_STATUS_UNKNOWN.
+HEATING_CIRCUIT_STATUS_MAP: dict[int, str] = {
+    0: "switched_off",
+    1: "normal_heating",
+    2: "comfort_heating",
+    3: "eco_heating",
+    4: "frost_protection",
+    5: "forced_consumption",
+    6: "forced_reduction",
+    7: "holiday",
+    8: "party",
+    9: "normal_cooling",
+    10: "comfort_cooling",
+    11: "eco_cooling",
+    12: "fault",
+    13: "manual",
+    14: "cooling_protection",
+    15: "party_cooling",
+    16: "screed_drying_heating_up",
+    17: "screed_drying_steady",
+    18: "screed_drying_cooling_down",
+    19: "screed_drying_final",
+    22: "cooling_constant_demand",
+    23: "heating_constant_demand",
+    24: "away_heating",
+    25: "away_cooling",
+    26: "smart_grid_preferred_heating",
+    27: "smart_grid_preferred_cooling",
+}
+HEATING_CIRCUIT_STATUS_OPTIONS: list[str] = [
+    *HEATING_CIRCUIT_STATUS_MAP.values(),
+    HEATING_CIRCUIT_STATUS_UNKNOWN,
+]
+
 
 @dataclass
 class HeatingCircuit:
@@ -628,6 +698,9 @@ class HeatingCircuit:
     # CONTROL_STRATEGY_HC1_REGISTER above), read by the diagnostic
     # control strategy sensor in sensor.py and by room_temp.py.
     control_strategy_reg: RegisterDef | None = None
+    # This circuit's control status (see HEATING_CIRCUIT_STATUS_MAP), read
+    # by the diagnostic heating circuit status sensor in sensor.py.
+    status_reg: RegisterDef | None = None
     # Constant flow setpoint for cooling; 0 means not cooling. Writing a
     # temperature turns cooling on (see climate.py). None means cooling isn't
     # supported for this circuit.
@@ -681,6 +754,13 @@ HEATING_CIRCUIT_1 = HeatingCircuit(
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC1_REGISTER,
     control_strategy_reg=CONTROL_STRATEGY_HC1_REGISTER,
+    status_reg=RegisterDef(
+        key="status_hc1",
+        name="Status heating circuit 1",
+        address=1501,
+        data_type="uint16",
+        enabled_default=False,
+    ),
     cooling_flow_setpoint_reg=RegisterDef(
         key="cooling_flow_setpoint_hc1",
         name="Cooling flow setpoint HC1",
@@ -741,6 +821,13 @@ HEATING_CIRCUIT_2 = HeatingCircuit(
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC2_REGISTER,
     control_strategy_reg=CONTROL_STRATEGY_HC2_REGISTER,
+    status_reg=RegisterDef(
+        key="status_hc2",
+        name="Status heating circuit 2",
+        address=1502,
+        data_type="uint16",
+        enabled_default=False,
+    ),
     cooling_flow_setpoint_reg=RegisterDef(
         key="cooling_flow_setpoint_hc2",
         name="Cooling flow setpoint HC2",
@@ -801,6 +888,13 @@ HEATING_CIRCUIT_3 = HeatingCircuit(
     ),
     smart_grid_offset_reg=SMART_GRID_OFFSET_HC3_REGISTER,
     control_strategy_reg=CONTROL_STRATEGY_HC3_REGISTER,
+    status_reg=RegisterDef(
+        key="status_hc3",
+        name="Status heating circuit 3",
+        address=1503,
+        data_type="uint16",
+        enabled_default=False,
+    ),
     cooling_flow_setpoint_reg=RegisterDef(
         key="cooling_flow_setpoint_hc3",
         name="Cooling flow setpoint HC3",
@@ -837,6 +931,8 @@ HEATING_CIRCUIT_REGISTERS = [
     hc.room_actual_temp_reg for hc in HEATING_CIRCUITS if hc.room_actual_temp_reg is not None
 ] + [
     hc.control_strategy_reg for hc in HEATING_CIRCUITS if hc.control_strategy_reg is not None
+] + [
+    hc.status_reg for hc in HEATING_CIRCUITS if hc.status_reg is not None
 ] + [
     hc.cooling_flow_setpoint_reg
     for hc in HEATING_CIRCUITS
@@ -918,10 +1014,59 @@ HEAT_PUMP_STATUS_REGISTER = RegisterDef(
     scale=1.0,
 )
 
+# Error code of the heat pump's controller (WFA). Shown as an enum sensor in
+# sensor.py, since 255 means "no error" and the other codes are warning
+# numbers (W..), not quantities.
+CONTROLLER_ERROR_REGISTER = RegisterDef(
+    key="controller_error_code",
+    name="Error code from controller",
+    address=1534,
+    data_type="uint16",
+)
+
 # Polled together with SENSOR_REGISTERS/NUMBER_REGISTERS/DHW_REGISTERS by the
-# coordinator, but kept as its own list since it needs special handling
+# coordinator, but kept as its own list since these need special handling
 # (code -> text translation) instead of the generic numeric sensor.
-STATUS_REGISTERS: list[RegisterDef] = [HEAT_PUMP_STATUS_REGISTER]
+STATUS_REGISTERS: list[RegisterDef] = [
+    HEAT_PUMP_STATUS_REGISTER,
+    CONTROLLER_ERROR_REGISTER,
+]
+
+CONTROLLER_ERROR_NONE = "no_error"
+CONTROLLER_ERROR_UNKNOWN = "unknown_error"
+
+# Raw error code -> enum sensor state, as listed in Hoval's Modbus guideline.
+# Unlisted codes fall back to CONTROLLER_ERROR_UNKNOWN; the raw code is
+# always exposed as an attribute.
+CONTROLLER_ERROR_MAP: dict[int, str] = {
+    255: CONTROLLER_ERROR_NONE,
+    74: "w11",
+    76: "w13",
+    80: "w17",
+    81: "w18",
+    82: "w19",
+    83: "w20",
+    84: "w21",
+    85: "w22",
+    86: "w23",
+    87: "w24",
+    88: "w25",
+    89: "w26",
+    90: "w27",
+    100: "w37",
+    101: "w38",
+    102: "w39",
+    103: "w40",
+    104: "w41",
+    106: "w43",
+    121: "w58",
+    122: "w59",
+    126: "w63",
+}
+CONTROLLER_ERROR_OPTIONS: list[str] = [
+    *CONTROLLER_ERROR_MAP.values(),
+    CONTROLLER_ERROR_UNKNOWN,
+]
 
 # Raw status code -> stable, machine-readable key (English, snake_case).
 # This dict is the single source of truth for which codes exist; the actual
@@ -1108,8 +1253,31 @@ SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER = RegisterDef(
     enabled_default=False,
 )
 
+# How much higher than a heating circuit's flow setpoint the heat generator
+# is asked to heat (while cooling: how much lower), to make up for the water
+# cooling down or mixing on its way to the circuit, e.g. in a buffer. The
+# datapoint list gives 1.0 K steps, but the controller applies 0.1 K. The
+# heat generator setpoint that results is rounded down to 0.5 K.
+FLOW_SETPOINT_RAISE_REGISTERS: list[RegisterDef] = [
+    RegisterDef(
+        key=f"flow_setpoint_raise_hc{circuit}",
+        name=f"Flow setpoint raise heating circuit {circuit}",
+        address=address,
+        data_type="int16",
+        scale=0.1,
+        unit="K",
+        writable=True,
+        min_value=0,
+        max_value=10,
+        step=0.1,
+        enabled_default=False,
+    )
+    for circuit, address in ((1, 30684), (2, 30685), (3, 30686))
+]
+
 NUMBER_REGISTERS.extend(
     [
+        *FLOW_SETPOINT_RAISE_REGISTERS,
         SMART_GRID_OFFSET_HC1_REGISTER,
         SMART_GRID_OFFSET_HC2_REGISTER,
         SMART_GRID_OFFSET_HC3_REGISTER,

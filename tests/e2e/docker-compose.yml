@@ -5,7 +5,7 @@ services:
       - "${MODBUS_SIM_PORT:-15020}:502"
 
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:2026.11.1
+    image: ghcr.io/home-assistant/home-assistant:${HA_VERSION:-2026.11.1}
     ports:
       - "${HA_PORT:-8123}:8123"
     volumes:

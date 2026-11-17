@@ -48,7 +48,14 @@ EXPECTED_ENABLED = [
     ("water_heater.", None),
     ("climate.", "heating_circuit_1"),
 ]
-EXPECTED_DISABLED_SUBSTRINGS = ["smart_grid", "cooling", "control_strategy"]
+EXPECTED_DISABLED_SUBSTRINGS = [
+    "smart_grid",
+    "cooling",
+    "control_strategy",
+    "flow_rate",
+    "pump_speed",
+    "setpoint_raise",
+]
 
 
 def request(method, path, body=None, form=None, token=None):
@@ -211,7 +218,7 @@ def set_source_state(token: str, value: str) -> None:
     )
 
 
-def open_circuit_form(token: str, entry_id: str, circuit: int) -> dict:
+def open_options_step(token: str, entry_id: str, step: str) -> dict:
     # Saved options reload the entry, during which the form isn't available.
     deadline = time.monotonic() + STATE_TIMEOUT_SECONDS
     while True:
@@ -226,15 +233,76 @@ def open_circuit_form(token: str, entry_id: str, circuit: int) -> dict:
         form = request(
             "POST",
             f"/api/config/config_entries/options/flow/{menu['flow_id']}",
-            body={"next_step_id": f"heating_circuit_{circuit}"},
+            body={"next_step_id": step},
             token=token,
         )
         if form.get("reason") != "not_loaded" or time.monotonic() > deadline:
-            break
+            return form
         time.sleep(1)
+
+
+def open_circuit_form(token: str, entry_id: str, circuit: int) -> dict:
+    form = open_options_step(token, entry_id, f"heating_circuit_{circuit}")
     if form.get("type") != "form" or form.get("step_id") != "circuit":
         raise SystemExit(f"Options flow did not open the circuit form: {form}")
     return form
+
+
+def open_general_form(token: str, entry_id: str) -> dict:
+    form = open_options_step(token, entry_id, "general")
+    if form.get("type") != "form" or form.get("step_id") != "general":
+        raise SystemExit(f"Options flow did not open the general form: {form}")
+    return form
+
+
+def wait_until_polling(token: str) -> None:
+    """Waits until the reloaded entry polls the controller again."""
+    deadline = time.monotonic() + STATE_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        states = request("GET", "/api/states", token=token)
+        polled = [
+            s for s in states
+            if s["entity_id"].startswith("sensor.") and "outdoor_temperature" in s["entity_id"]
+        ]
+        if polled and all(s["state"] not in ("unavailable", "unknown") for s in polled):
+            return
+        time.sleep(2)
+    raise SystemExit("Entities did not become available again after saving options")
+
+
+def check_timeout_option(token: str, entry_id: str) -> None:
+    version = request("GET", "/api/config", token=token)["version"]
+    # HA-COMPAT(2026.10): drop the check for a missing field.
+    supported = tuple(int(part) for part in version.split(".")[:2]) >= (2026, 10)
+    fields = form_fields(open_general_form(token, entry_id))
+    if ("timeout" in fields) != supported:
+        raise SystemExit(
+            f"Timeout option offered: {'timeout' in fields}, expected {supported} "
+            f"on Home Assistant {version}"
+        )
+    if not supported:
+        print(f"OK: no timeout option on Home Assistant {version}")
+        return
+
+    result = submit_form(
+        token, open_general_form(token, entry_id), {"scan_interval": 30, "timeout": 5}
+    )
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Options flow did not save the timeout: {result}")
+    field = form_fields(open_general_form(token, entry_id))["timeout"]
+    if (field.get("description") or {}).get("suggested_value") != 5:
+        raise SystemExit(f"Timeout was not stored: {field}")
+    wait_until_polling(token)
+
+    # An emptied field goes back to DEFAULT_TIMEOUT.
+    result = submit_form(token, open_general_form(token, entry_id), {"scan_interval": 30})
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Options flow did not save: {result}")
+    field = form_fields(open_general_form(token, entry_id))["timeout"]
+    if (field.get("description") or {}).get("suggested_value") != 3.0:
+        raise SystemExit(f"Timeout did not go back to the default: {field}")
+    wait_until_polling(token)
+    print(f"OK: timeout option works on Home Assistant {version}")
 
 
 def form_fields(form: dict) -> dict:
@@ -570,6 +638,7 @@ def main() -> None:
     states = wait_for_states(token)
     check(states)
     check_diagnostics(token, entry_id)
+    check_timeout_option(token, entry_id)
     check_sending(token, entry_id)
     check_reading_room_sensor(token, entry_id)
     check_sensor_detection(token, entry_id)

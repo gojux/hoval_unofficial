@@ -6,13 +6,21 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.components import modbus
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_NAME,
+    CONF_PORT,
+    CONF_SCAN_INTERVAL,
+    CONF_TIMEOUT,
+)
+from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from pymodbus.client import AsyncModbusTcpClient
+from modbus_connection import ModbusExceptionError, ModbusTcpParams
 
 from .const import (
     CONF_DEVICE_ID,
@@ -30,18 +38,21 @@ from .const import (
     DEFAULT_NAME,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TIMEOUT,
     DOMAIN,
     HEATING_CIRCUIT_1,
     HEATING_CIRCUIT_2,
     HEATING_CIRCUIT_3,
     HEATING_CIRCUITS,
     HeatingCircuit,
+    MAX_TIMEOUT,
+    MIN_TIMEOUT,
     current_temp_entity_key,
     current_temp_source_key,
     previous_strategy_key,
 )
 from . import async_read_cooling_options
-from .coordinator import HovalModbusCoordinator
+from .coordinator import HovalModbusCoordinator, timeout_supported
 from .room_temp import has_room_sensor, parse_room_temperature
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,24 +85,26 @@ STEP_RECONFIGURE_DATA_SCHEMA = vol.Schema(
 )
 
 
-async def test_connection(host: str, port: int, device_id: int) -> bool:
+async def test_connection(
+    hass: HomeAssistant, host: str, port: int, device_id: int
+) -> bool:
     """Checks whether a Modbus device is reachable with the given settings."""
-    client = AsyncModbusTcpClient(host, port=port)
     try:
-        connected = await client.connect()
-        if not connected:
-            return False
-        # A simple read attempt on register 0 is enough to test connectivity.
+        async with modbus.async_get_temporary_unit(
+            hass, ModbusTcpParams(host=host, port=port), device_id
+        ) as unit:
+            # A simple read attempt on register 0 is enough to test
+            # connectivity.
+            await unit.read_holding_registers(0, 1)
+    except ModbusExceptionError:
         # An error code returned by the device (e.g. "IllegalAddress") still
         # counts as "device reachable" -- only an actual communication
         # failure does not.
-        result = await client.read_holding_registers(0, count=1, device_id=device_id)
-        return result is not None
+        return True
     except Exception:  # pylint: disable=broad-except
         _LOGGER.exception("Connection test failed")
         return False
-    finally:
-        client.close()
+    return True
 
 
 class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -116,7 +129,7 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(unique_id)
             self._abort_if_unique_id_configured()
 
-            connection_ok = await test_connection(host, port, device_id)
+            connection_ok = await test_connection(self.hass, host, port, device_id)
             if not connection_ok:
                 errors["base"] = "cannot_connect"
             else:
@@ -149,7 +162,7 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             port = user_input[CONF_PORT]
             device_id = user_input[CONF_DEVICE_ID]
 
-            connection_ok = await test_connection(host, port, device_id)
+            connection_ok = await test_connection(self.hass, host, port, device_id)
             if not connection_ok:
                 errors["base"] = "cannot_connect"
             else:
@@ -222,6 +235,8 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             options = dict(self.config_entry.options)
             options.pop(CONF_SCAN_INTERVAL, None)
+            # An emptied timeout field goes back to DEFAULT_TIMEOUT.
+            options.pop(CONF_TIMEOUT, None)
             options.update(user_input)
             return self.async_create_entry(title="", data=options)
 
@@ -229,16 +244,28 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
             CONF_SCAN_INTERVAL,
             self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
         )
+        schema: dict[Any, Any] = {
+            vol.Optional(
+                CONF_SCAN_INTERVAL,
+                description={"suggested_value": current_scan_interval},
+            ): vol.Coerce(int),
+        }
+        # Only offered where Home Assistant's Modbus connection takes a
+        # request timeout; otherwise its default applies.
+        # HA-COMPAT(2026.10): always offer the field.
+        if timeout_supported():
+            schema[
+                vol.Optional(
+                    CONF_TIMEOUT,
+                    description={
+                        "suggested_value": self.config_entry.options.get(
+                            CONF_TIMEOUT, DEFAULT_TIMEOUT
+                        )
+                    },
+                )
+            ] = vol.All(vol.Coerce(float), vol.Range(min=MIN_TIMEOUT, max=MAX_TIMEOUT))
         return self.async_show_form(
-            step_id="general",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_SCAN_INTERVAL,
-                        description={"suggested_value": current_scan_interval},
-                    ): vol.Coerce(int),
-                }
-            ),
+            step_id="general", data_schema=vol.Schema(schema)
         )
 
     async def async_step_heating_circuit_1(

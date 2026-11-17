@@ -4,7 +4,14 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_SCAN_INTERVAL, Platform
+from homeassistant.const import (
+    CONF_HOST,
+    CONF_NAME,
+    CONF_PORT,
+    CONF_SCAN_INTERVAL,
+    CONF_TIMEOUT,
+    Platform,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -13,6 +20,7 @@ from .const import (
     CONTROL_STRATEGIES_COOLING,
     CURRENT_TEMP_SOURCE_ENTITY_WRITE,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TIMEOUT,
     DOMAIN,
     HEATING_CIRCUITS,
     HeatingCircuit,
@@ -44,7 +52,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     coordinator = HovalModbusCoordinator(
-        hass, name, host, port, device_id, scan_interval
+        hass,
+        entry,
+        name,
+        host,
+        port,
+        device_id,
+        scan_interval,
+        entry.options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
     )
     await coordinator.async_config_entry_first_refresh()
 
@@ -114,10 +129,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator: HovalModbusCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         for writer in coordinator.room_temp_writers.values():
             writer.async_stop()
-        await coordinator.async_close()
     return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Resets what the integration changed on the controller."""
-    await async_cleanup_removed_entry(entry)
+    await async_cleanup_removed_entry(hass, entry)

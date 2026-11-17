@@ -46,7 +46,12 @@
       "general": {
         "title": "Allgemein",
         "data": {
-          "scan_interval": "Abfrageintervall (Sekunden)"
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "timeout": "Modbus-Timeout pro Anfrage (Sekunden)"
+        },
+        "data_description": {
+          "scan_interval": "Empfohlen: 20 Sekunden oder weniger. Das Hoval-Gateway lässt länger ungenutzte Verbindungen fallen, danach dauert jede Abfrage einige Sekunden länger.",
+          "timeout": "Standard: 3 s (auch wenn das Feld geleert wird). Andere Integrationen am selben Gateway teilen sich die Verbindung; es gilt der längste von ihnen verlangte Timeout."
         }
       },
       "circuit": {
@@ -159,6 +164,15 @@
       }
     },
     "number": {
+      "flow_setpoint_raise_hc1": {
+        "name": "Überhöhung Vorlauf-Soll Heizkreis 1"
+      },
+      "flow_setpoint_raise_hc2": {
+        "name": "Überhöhung Vorlauf-Soll Heizkreis 2"
+      },
+      "flow_setpoint_raise_hc3": {
+        "name": "Überhöhung Vorlauf-Soll Heizkreis 3"
+      },
       "smart_grid_offset_hc1": {
         "name": "Smart Grid Offset Heizkreis 1"
       },
@@ -211,6 +225,38 @@
           "constant": "Konstantregelung",
           "weather_compensated_cooling_constant": "Reine Witterungsführung Heizen + Konstantregelung Kühlen",
           "weather_compensated_room_influence_cooling_constant": "Witterungsführung mit Raumaufschaltung Heizen + Konstantregelung Kühlen",
+          "unknown": "Unbekannt"
+        }
+      },
+      "heating_circuit_status": {
+        "name": "Status Heizkreis {circuit}",
+        "state": {
+          "switched_off": "Abgeschaltet",
+          "normal_heating": "Normal Heizbetrieb",
+          "comfort_heating": "Komfort Heizbetrieb",
+          "eco_heating": "Spar Heizbetrieb",
+          "frost_protection": "Frostbetrieb",
+          "forced_consumption": "Zwangsabnahme",
+          "forced_reduction": "Zwangsdrosselung",
+          "holiday": "Ferienbetrieb",
+          "party": "Partybetrieb",
+          "normal_cooling": "Normal Kühlbetrieb",
+          "comfort_cooling": "Komfort Kühlbetrieb",
+          "eco_cooling": "Spar Kühlbetrieb",
+          "fault": "Störung",
+          "manual": "Handbetrieb",
+          "cooling_protection": "Schutz Kühlbetrieb",
+          "party_cooling": "Partybetrieb Kühlen",
+          "screed_drying_heating_up": "Austrocknung Aufheizphase",
+          "screed_drying_steady": "Austrocknung Stationärphase",
+          "screed_drying_cooling_down": "Austrocknung Abkühlphase",
+          "screed_drying_final": "Austrocknung Endphase",
+          "cooling_constant_demand": "Kühlbetrieb Extern/Konstantanforderung",
+          "heating_constant_demand": "Heizbetrieb Extern/Konstantanforderung",
+          "away_heating": "Abwesend Heizbetrieb",
+          "away_cooling": "Abwesend Kühlbetrieb",
+          "smart_grid_preferred_heating": "Vorzugsbetrieb SmartGrid Heizen",
+          "smart_grid_preferred_cooling": "Vorzugsbetrieb SmartGrid Kühlen",
           "unknown": "Unbekannt"
         }
       },
@@ -280,13 +326,45 @@
         "name": "Wärmeerzeuger Status-Code"
       },
       "controller_error_code": {
-        "name": "Fehlercode vom Automaten"
+        "name": "Fehlercode vom Automaten",
+        "state": {
+          "no_error": "Kein Fehler",
+          "w11": "W11",
+          "w13": "W13",
+          "w17": "W17",
+          "w18": "W18",
+          "w19": "W19",
+          "w20": "W20",
+          "w21": "W21",
+          "w22": "W22",
+          "w23": "W23",
+          "w24": "W24",
+          "w25": "W25",
+          "w26": "W26",
+          "w27": "W27",
+          "w37": "W37",
+          "w38": "W38",
+          "w39": "W39",
+          "w40": "W40",
+          "w41": "W41",
+          "w43": "W43",
+          "w58": "W58",
+          "w59": "W59",
+          "w63": "W63",
+          "unknown_error": "Unbekannter Fehler"
+        }
       },
       "return_temp_heat_generator": {
         "name": "Wärmeerzeuger Rücklauftemperatur"
       },
       "modulation": {
         "name": "Modulation"
+      },
+      "heat_pump_flow_rate": {
+        "name": "Volumenstrom Wärmepumpe"
+      },
+      "heat_pump_circulation_pump_speed": {
+        "name": "Drehzahl Umwälzpumpe Wärmepumpe"
       },
       "operating_hours_heat_generator_above_50": {
         "name": "Betriebsstunden Wärmeerzeuger >50%"

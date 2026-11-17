@@ -7,22 +7,67 @@ integration. For installation and usage as an end user, see
 
 ## Dependencies and architecture notes
 
-> **pymodbus `device_id`:** pymodbus renamed the `slave` parameter to
-> `device_id` in version 3.10.0. This integration uses the new
-> `device_id` naming throughout (config key, variable names, and the
-> `pymodbus` calls in `coordinator.py`). The `manifest.json` requirement
-> is pinned to `pymodbus>=3.11.0` rather than `3.10.0`, since `3.10.0`
-> had known issues -- `3.11.0` is the first release with the
-> `device_id` naming that's actually solid enough to depend on.
+> **Modbus connection:** The integration uses Home Assistant's shared
+> Modbus connection (`homeassistant.components.modbus.async_get_unit` /
+> `async_get_temporary_unit`, library `modbus-connection` with the
+> `tmodbus` backend), hence `dependencies: ["modbus"]` in `manifest.json`
+> and a minimum of Home Assistant 2026.9. All integrations talking to the
+> same gateway share one connection and their requests are serialized.
+> Errors are exceptions: `ModbusExceptionError` means the controller
+> answered with an error code (e.g. a register it doesn't have), every
+> other `ModbusError` means the request didn't get through. The library
+> doesn't repeat requests, so the coordinator does (`_with_retries`), 1 s
+> apart: a read or write gets up to three tries that end without an answer
+> (timeout or late answer). After each of these it drops the connection
+> (`ModbusUnit.disconnect()`), so the next try opens a new one; this also
+> reconnects other integrations sharing the gateway. A connection dropped
+> by the gateway doesn't count as a try, so the request is repeated on the
+> new connection (at most twice). The gateway stops answering on a
+> connection that has been idle for about 20-30 seconds and only drops it
+> a few requests later; just a new connection gets answers again. The
+> default polling interval of 20 seconds (`DEFAULT_SCAN_INTERVAL`) keeps
+> the connection busy enough that this doesn't happen; the retries cover
+> longer intervals and other interruptions.
 
-> **Modbus architecture:** Home Assistant is working on a new
-> shared-connection `modbus_connection` integration for future
-> manufacturer-specific integrations (see the [July 2026 developer blog
-> post](https://developers.home-assistant.io/blog/2026/07/05/modernizing-modbus)),
-> but as of its July 16, 2026 update the approach is explicitly being
-> re-evaluated and not yet recommended for new device integrations. This
-> integration intentionally keeps using `pymodbus` directly via its own
-> `AsyncModbusTcpClient` connection.
+<!-- HA-COMPAT(2026.10): describe the timeout as always available. -->
+> **Request timeout:** From Home Assistant 2026.10 a unit can ask for a
+> request timeout (`ModbusUnit.require_timeout`). The integration detects
+> this at runtime (`coordinator.timeout_supported()`) and only then
+> offers the timeout in the options, asking for `DEFAULT_TIMEOUT` (3 s)
+> unless the user enters another value; on 2026.9 the library default of
+> 10 s applies. The connection uses the longest timeout any consumer of
+> the gateway asks for.
+
+## Supported Home Assistant versions
+
+- **Minimum:** the integration supports at least the last three Home
+  Assistant releases. The minimum is raised only when that brings
+  something, e.g. removing compatibility code or an API Home Assistant
+  drops -- not automatically with every release.
+- **New Home Assistant features** (especially in the Modbus integration
+  and `modbus-connection`) are reviewed with every release and, where
+  possible, built in backwards compatible: detected at runtime (e.g.
+  `hasattr`), not by comparing version numbers. Older versions keep
+  their behavior, newer ones use the feature. Options that depend on a
+  feature are only shown where it is available.
+- **Review per release:** compare `homeassistant/components/modbus/`
+  (`connection.py`, `__init__.py`, `manifest.json`) and the
+  `modbus-connection` API (`ModbusUnit`, exceptions) with the previous
+  release, and check the Home Assistant log of the E2E run for
+  deprecation warnings.
+- **Tests:** run the E2E tests on the minimum and on the latest release
+  (`HA_VERSION=<version>`, see `tests/e2e/docker-compose.yml`), the
+  releases in between when something relevant changed there.
+- **Marking compatibility code:** every place that exists only for older
+  releases -- code, tests and docs -- gets a marker naming the release
+  from which it is no longer needed, plus what to do then:
+  `# HA-COMPAT(2026.10): always offer the field.` (in Markdown as
+  `<!-- HA-COMPAT(2026.10): ... -->`). `python3 tests/check_compat_markers.py`
+  lists all markers and fails when one is at or below the minimum in
+  `hacs.json`.
+- **Raising the minimum:** update `hacs.json`, the README and this file
+  together, run `tests/check_compat_markers.py` and clean up every marker
+  it reports as due.
 
 ## File overview
 
@@ -31,10 +76,14 @@ integration. For installation and usage as an end user, see
   (`DataUpdateCoordinator`), read/write logic including encoding/decoding.
   Only polls registers that at least one currently enabled, added-to-hass
   entity actually reads (see "Selective polling" below).
-- `const.py` – register map for a real Hoval controller (35 registers total)
-- `sensor.py` – creates HA sensors from `SENSOR_REGISTERS`, plus a
-  dedicated `HovalStatusSensor` (device_class `enum`) that translates the
-  raw numeric status code into a localized status text (English/German)
+- `const.py` – register map for a real Hoval controller; addresses and
+  their verification status are listed in [REGISTERS.md](REGISTERS.md)
+- `sensor.py` – creates HA sensors from `SENSOR_REGISTERS`, plus
+  dedicated enum sensors (device_class `enum`) that translate raw codes
+  into localized texts (English/German): `HovalStatusSensor` (status),
+  `HovalControllerErrorSensor` (error code, 255 = no error), the Smart
+  Grid status sensor and, per heating circuit, the control strategy and
+  status sensors (diagnostic, disabled by default)
 - `number.py` – creates writable HA entities from `NUMBER_REGISTERS`
 - `select.py` – `HovalMappedSelect`, a generic writable `select` entity
   used for the two Smart Grid registers (trigger/mode), mapping the raw
@@ -71,11 +120,12 @@ defined registers. If a block read returns an error response, its
 registers are read one by one so that a single unreadable register doesn't
 hide the others.
 
-This also means write-only registers (e.g.
+This also means registers the integration only writes (e.g.
 `write_normal_setpoint_reg`/`write_eco_setpoint_reg` per heating circuit,
 `DHW_NORMAL_TARGET_TEMP_REGISTER`/`DHW_ECO_TARGET_TEMP_REGISTER`) are
-never polled at all -- no entity ever
-reads them for display, they're only used inside `async_write_value()`.
+never polled at all, although the controller allows reading them -- no
+entity reads them for display, they're only used inside
+`async_write_value()`.
 
 ## A note on entity naming and `translation_key`
 

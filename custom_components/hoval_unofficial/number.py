@@ -4,6 +4,7 @@ from __future__ import annotations
 from homeassistant.components.number import (
     NumberDeviceClass,
     NumberEntity,
+    NumberMode,
     RestoreNumber,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -53,6 +54,9 @@ class HovalNumber(CoordinatorEntity[HovalModbusCoordinator], NumberEntity):
     """A writable Modbus value (e.g. a setpoint), exposed as a HA number entity."""
 
     _attr_has_entity_name = True
+    # An input box instead of a slider: offsets need exact values, and every
+    # slider release would write to the controller right away.
+    _attr_mode = NumberMode.BOX
 
     def __init__(
         self,
@@ -65,9 +69,9 @@ class HovalNumber(CoordinatorEntity[HovalModbusCoordinator], NumberEntity):
         self._attr_unique_id = f"{entry.entry_id}_{reg.key}"
         self._attr_translation_key = reg.key
         self._attr_native_unit_of_measurement = reg.unit
-        self._attr_native_min_value = reg.min_value or 0
-        self._attr_native_max_value = reg.max_value or 100
-        self._attr_native_step = reg.step or 1
+        self._attr_native_min_value = 0 if reg.min_value is None else reg.min_value
+        self._attr_native_max_value = 100 if reg.max_value is None else reg.max_value
+        self._attr_native_step = 1 if reg.step is None else reg.step
         self._attr_entity_registry_enabled_default = reg.enabled_default
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},

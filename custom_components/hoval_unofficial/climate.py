@@ -164,7 +164,7 @@ class HovalRoomClimate(
         # coordinator-subscription "context" -- see async_contexts() in
         # coordinator.py. mode_reg/read_setpoint_reg are always needed;
         # write_normal_setpoint_reg/write_eco_setpoint_reg are intentionally
-        # excluded (write-only, never read for display). room_actual_temp_reg
+        # excluded (only written, never read for display). room_actual_temp_reg
         # is only included if this circuit's source is actually set to
         # "modbus" AND the register is configured, so switching to
         # "none"/"entity" also stops polling it.
@@ -485,7 +485,7 @@ class HovalRoomClimate(
         return offset if offset is not None else 0.0
 
     def _target_setpoint_register_for_current_mode(self) -> RegisterDef | None:
-        """Which write-only setpoint register applies to the current mode:
+        """Which setpoint register to write applies to the current mode:
         write_normal_setpoint_reg while HVACMode.HEAT ("Constant"),
         write_eco_setpoint_reg while HVACMode.AUTO with the "eco" preset
         active. None for Off and the Week1/Week2 schedule presets, which
