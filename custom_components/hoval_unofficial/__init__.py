@@ -18,7 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
-    CIRCUIT_FLOW_TEMP_KEYS,
+    CIRCUIT_FLOW_TEMP_REGISTERS,
     COOLING_SENSOR_KEYS,
     CONF_DHW_PRESENT,
     DHW_CURRENT_TEMP_REGISTER,
@@ -38,6 +38,7 @@ from .const import (
     DOMAIN,
     HEATING_CIRCUITS,
     HeatingCircuit,
+    RegisterDef,
     buffer_module_key,
     buffer_module_temp_plausible,
     constant_control_enabled,
@@ -98,7 +99,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     # Before the update listener is added, so storing these doesn't reload.
-    circuit_options = _detect_present(hass, coordinator, entry)
+    circuit_options = await _async_detect_present(hass, coordinator, entry)
     present = present_circuits({**entry.options, **circuit_options})
     circuit_options.update(
         await async_read_circuit_options(
@@ -146,6 +147,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _enable_cooling_sensors(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _remove_stale_entities(hass, coordinator, entry)
+    # The first refresh only read the registers of the entities enabled by
+    # default; now the entities and functions have told what they need.
+    await coordinator.async_refresh()
 
     for hc in present_circuits(entry.options):
         entity_id = entry.options.get(current_temp_entity_key(hc))
@@ -218,34 +222,43 @@ def _remove_stale_entities(
             registry.async_remove(reg_entry.entity_id)
 
 
-def _detect_present(
+async def _async_detect_present(
     hass: HomeAssistant, coordinator: HovalModbusCoordinator, entry: ConfigEntry
 ) -> dict[str, bool]:
     """Whether heating circuits 2/3 and domestic hot water are there, for
-    those not stored yet, from the first poll: a circuit whose flow
-    temperature isn't 0, or one with an entity enabled before; domestic hot
-    water whose temperature isn't 0, or always for an entry set up before
-    (one that already has options)."""
-    data = coordinator.data or {}
+    those not stored yet: a circuit with an entity enabled before, or whose
+    flow temperature isn't 0; domestic hot water always for an entry set up
+    before (one that already has options), otherwise if its temperature
+    isn't 0. One whose register can't be read is left out, so it is detected
+    again on the next start."""
     registry = er.async_get(hass)
     enabled = [
         reg_entry.unique_id
         for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id)
         if not reg_entry.disabled
     ]
+
+    async def nonzero(reg: RegisterDef) -> bool | None:
+        try:
+            return bool(await coordinator.async_read_value_if_present(reg))
+        except UpdateFailed:
+            return None
+
     options: dict[str, bool] = {}
     for number, hc in enumerate(HEATING_CIRCUITS, start=1):
         if hc is HEATING_CIRCUIT_1 or circuit_present_key(hc) in entry.options:
             continue
-        options[circuit_present_key(hc)] = bool(
-            data.get(CIRCUIT_FLOW_TEMP_KEYS[hc.key])
-        ) or any(
+        if any(
             unique_id.endswith((f"_hc{number}", f"_{hc.key}")) for unique_id in enabled
-        )
+        ):
+            options[circuit_present_key(hc)] = True
+        elif (present := await nonzero(CIRCUIT_FLOW_TEMP_REGISTERS[hc.key])) is not None:
+            options[circuit_present_key(hc)] = present
     if CONF_DHW_PRESENT not in entry.options:
-        options[CONF_DHW_PRESENT] = bool(entry.options) or bool(
-            data.get(DHW_CURRENT_TEMP_REGISTER.key)
-        )
+        if entry.options:
+            options[CONF_DHW_PRESENT] = True
+        elif (present := await nonzero(DHW_CURRENT_TEMP_REGISTER)) is not None:
+            options[CONF_DHW_PRESENT] = present
     return options
 
 

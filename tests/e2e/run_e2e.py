@@ -49,6 +49,12 @@ FLOW_MAX_HC1 = 30690
 BUFFER_MODULE_TEMP = 17324
 # Low word of the buffer sensor (WPF, 27493/27494).
 BUFFER_SENSOR = 27494
+# The simulator leaves reads of the range between these unanswered.
+SIM_SILENT_FIRST = 65000
+SIM_SILENT_LAST = 65001
+# Buffer sensor (27493/27494, enabled by default) and heat pump circulation
+# pump speed (27495/27496, disabled by default).
+SILENT_RANGE = (27493, 27496)
 # The room setpoint is sent after 5 minutes without a usable value.
 FALLBACK_TIMEOUT_SECONDS = 6 * 60
 
@@ -214,6 +220,21 @@ def expect_sim(address: int, value: int, timeout: float = 15) -> None:
             return
         time.sleep(1)
     raise SystemExit(f"Register {address} is {read_sim(address)}, expected {value}")
+
+
+def set_silent_range(first: int, last: int) -> None:
+    write_sim(SIM_SILENT_LAST, last)
+    write_sim(SIM_SILENT_FIRST, first)
+
+
+def check_unanswered_registers(token: str) -> None:
+    """Set up while SILENT_RANGE isn't answered: the integration starts, and
+    only the unanswered buffer temperature has no value."""
+    state = entity_state(token, "_buffer_temperature")
+    if state["state"] != "unknown":
+        raise SystemExit(f"Unanswered buffer temperature is {state['state']}")
+    set_silent_range(0, 0)
+    print("OK: an unanswered register doesn't keep the integration from starting")
 
 
 def set_source_state(token: str, value: str) -> None:
@@ -1038,9 +1059,11 @@ def main() -> None:
     # temperature other than 0.
     for address in (*FLOW_TEMP_REGISTERS.values(), DHW_TEMP):
         write_sim(address, 350)
+    set_silent_range(*SILENT_RANGE)
     entry_id = add_integration(token)
     states = wait_for_states(token)
     check(states)
+    check_unanswered_registers(token)
     check_diagnostics(token, entry_id)
     check_timeout_option(token, entry_id)
     check_sending(token, entry_id)

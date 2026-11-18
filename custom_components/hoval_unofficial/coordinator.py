@@ -74,9 +74,16 @@ REQUEST_ATTEMPTS = 3
 MAX_LOST_CONNECTIONS = 2
 RETRY_DELAY = 1.0  # seconds
 
-# A register the controller answered with an error code for is left out of
-# the block reads and tried again on its own at most this often.
+# A register the controller answered with an error code for, or didn't
+# answer for while it still answered other requests, is left out of the
+# block reads and tried again on its own, with a single attempt, at most this
+# often.
 UNREADABLE_RETRY_SECONDS = 600
+
+# Read after a request that wasn't answered, to tell whether the controller
+# still answers at all: outdoor temperature, which every controller has. An
+# error code counts as an answer as well.
+PROBE_ADDRESS = 1477
 
 
 @dataclass(frozen=True)
@@ -177,10 +184,14 @@ async def _drop_connection(unit: ModbusUnit) -> None:
 
 
 async def _with_retries[T](
-    unit: ModbusUnit, request: Callable[[], Awaitable[T]], description: str
+    unit: ModbusUnit,
+    request: Callable[[], Awaitable[T]],
+    description: str,
+    attempts: int = REQUEST_ATTEMPTS,
 ) -> T:
     """Runs a request, repeating it after transient errors (see
-    FAILED_ANSWER_ERRORS and MAX_LOST_CONNECTIONS above)."""
+    FAILED_ANSWER_ERRORS and MAX_LOST_CONNECTIONS above), with `attempts`
+    instead of REQUEST_ATTEMPTS if given."""
     failed_answers = 0
     lost_connections = 0
     while True:
@@ -189,13 +200,13 @@ async def _with_retries[T](
         except FAILED_ANSWER_ERRORS as err:
             failed_answers += 1
             await _drop_connection(unit)
-            if failed_answers >= REQUEST_ATTEMPTS:
+            if failed_answers >= attempts:
                 raise
             _LOGGER.debug(
                 "%s failed (no answer %s of %s), retrying on a new connection: %s",
                 description,
                 failed_answers,
-                REQUEST_ATTEMPTS,
+                attempts,
                 err,
             )
         except ModbusConnectionError as err:
@@ -213,14 +224,20 @@ async def _with_retries[T](
 
 
 async def read_registers(
-    unit: ModbusUnit, register_type: RegisterType, address: int, count: int
+    unit: ModbusUnit,
+    register_type: RegisterType,
+    address: int,
+    count: int,
+    attempts: int = REQUEST_ATTEMPTS,
 ) -> list[int]:
     """Reads raw registers. Raises ModbusError on failure."""
     if register_type == "holding":
         request = partial(unit.read_holding_registers, address, count)
     else:
         request = partial(unit.read_input_registers, address, count)
-    return await _with_retries(unit, request, f"Reading {count} registers at {address}")
+    return await _with_retries(
+        unit, request, f"Reading {count} registers at {address}", attempts
+    )
 
 
 async def read_register(unit: ModbusUnit, reg: RegisterDef) -> float:
@@ -323,10 +340,10 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         # registers are skipped automatically, and enabling one later picks
         # its registers back up on the next poll without a reload.
         #
-        # Fallback: an empty needed_keys (e.g. the very first refresh in
-        # __init__.py, which runs before entities are set up) means "poll
-        # everything" -- not knowing what's needed should never mean
-        # fetching nothing.
+        # Fallback: an empty needed_keys (the first refresh in __init__.py,
+        # which runs before entities are set up) means the registers of the
+        # entities enabled by default. __init__.py refreshes again right
+        # after setting up the entities, for the ones enabled otherwise.
         needed_keys: set[str] = set()
         for context in self.async_contexts():
             needed_keys.update(context)
@@ -334,7 +351,7 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         registers_to_poll = (
             [reg for reg in ALL_REGISTERS if reg.key in needed_keys]
             if needed_keys
-            else ALL_REGISTERS
+            else [reg for reg in ALL_REGISTERS if reg.enabled_default]
         )
 
         now = time.monotonic()
@@ -354,18 +371,16 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
                     )
                 except ModbusExceptionError as err:
                     # The controller answered with an error code, e.g. for a
-                    # register it doesn't have. Read the registers one by one
-                    # so a single unreadable register doesn't hide the others
-                    # in the block.
-                    if len(block.registers) > 1:
-                        _LOGGER.debug(
-                            "Block read at address %s (%s registers) failed: %s",
-                            block.address,
-                            block.count,
-                            err,
-                        )
-                    for reg in block.registers:
-                        await self._async_read_single(data, reg)
+                    # register it doesn't have.
+                    await self._async_read_one_by_one(data, block, err)
+                    continue
+                except FAILED_ANSWER_ERRORS as err:
+                    # No answer, not even on new connections. Some
+                    # controllers don't answer at all for a register they
+                    # don't have; the poll only fails if they don't answer
+                    # other requests either.
+                    await self._async_raise_unless_answering(err)
+                    await self._async_read_one_by_one(data, block, err)
                     continue
 
                 for reg in block.registers:
@@ -375,35 +390,76 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
                     )
 
             for reg in retry:
-                await self._async_read_single(data, reg)
+                await self._async_read_single(data, reg, attempts=1)
         except ModbusError as err:
             raise UpdateFailed(f"Modbus error while polling: {err}") from err
 
         return data
 
-    async def _async_read_single(self, data: dict[str, float], reg: RegisterDef) -> None:
+    async def _async_read_one_by_one(
+        self, data: dict[str, float], block: ReadBlock, err: ModbusError
+    ) -> None:
+        """Reads a block's registers one by one after reading the block
+        failed with `err`, so a single unreadable register doesn't hide the
+        others in the block."""
+        if len(block.registers) == 1:
+            self._mark_unreadable(block.registers[0], err)
+            return
+        _LOGGER.debug(
+            "Block read at address %s (%s registers) failed: %s",
+            block.address,
+            block.count,
+            err,
+        )
+        for reg in block.registers:
+            await self._async_read_single(data, reg)
+
+    async def _async_read_single(
+        self, data: dict[str, float], reg: RegisterDef, attempts: int = REQUEST_ATTEMPTS
+    ) -> None:
         """Reads one register and keeps track of whether it is readable.
-        Raises ModbusError on errors other than an error code."""
+        Raises ModbusError unless the controller answered with an error code
+        or still answers other requests."""
         try:
             registers = await read_registers(
-                self.unit, reg.register_type, reg.address, reg.register_count
+                self.unit, reg.register_type, reg.address, reg.register_count, attempts
             )
         except ModbusExceptionError as err:
-            if reg.key not in self._unreadable:
-                _LOGGER.warning(
-                    "Error reading %s (address %s): %s; trying again every %s s",
-                    reg.key,
-                    reg.address,
-                    err,
-                    UNREADABLE_RETRY_SECONDS,
-                )
-            else:
-                _LOGGER.debug("%s still unreadable: %s", reg.key, err)
-            self._unreadable[reg.key] = time.monotonic()
+            self._mark_unreadable(reg, err)
+            return
+        except FAILED_ANSWER_ERRORS as err:
+            await self._async_raise_unless_answering(err)
+            self._mark_unreadable(reg, err)
             return
         if self._unreadable.pop(reg.key, None) is not None:
             _LOGGER.info("%s (address %s) is readable again", reg.key, reg.address)
         self._store_value(data, reg, registers)
+
+    async def _async_raise_unless_answering(self, err: ModbusError) -> None:
+        """After a request that wasn't answered (`err`), raises `err` unless
+        the controller still answers other requests (see PROBE_ADDRESS)."""
+        try:
+            await read_registers(self.unit, "holding", PROBE_ADDRESS, 1)
+        except ModbusExceptionError:
+            return
+        except ModbusError as probe_err:
+            _LOGGER.debug("The controller doesn't answer any request: %s", probe_err)
+            raise err from None
+
+    def _mark_unreadable(self, reg: RegisterDef, err: ModbusError) -> None:
+        """Leaves a register out of the block reads (see
+        UNREADABLE_RETRY_SECONDS)."""
+        if reg.key not in self._unreadable:
+            _LOGGER.warning(
+                "Error reading %s (address %s): %s; trying again every %s s",
+                reg.key,
+                reg.address,
+                err,
+                UNREADABLE_RETRY_SECONDS,
+            )
+        else:
+            _LOGGER.debug("%s still unreadable: %s", reg.key, err)
+        self._unreadable[reg.key] = time.monotonic()
 
     @staticmethod
     def _store_value(data: dict[str, float], reg: RegisterDef, registers: list[int]) -> None:

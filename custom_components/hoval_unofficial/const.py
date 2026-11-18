@@ -1007,8 +1007,9 @@ CIRCUIT_SENSOR_KEYS: dict[str, tuple[str, ...]] = {
 }
 # The register telling whether a heating circuit is there: its flow
 # temperature, 0 without a circuit.
-CIRCUIT_FLOW_TEMP_KEYS: dict[str, str] = {
-    hc.key: f"flow_temp_hc{number}" for number, hc in enumerate(HEATING_CIRCUITS, start=1)
+CIRCUIT_FLOW_TEMP_REGISTERS: dict[str, RegisterDef] = {
+    hc.key: next(reg for reg in SENSOR_REGISTERS if reg.key == f"flow_temp_hc{number}")
+    for number, hc in enumerate(HEATING_CIRCUITS, start=1)
 }
 
 HEATING_CIRCUIT_REGISTERS = [

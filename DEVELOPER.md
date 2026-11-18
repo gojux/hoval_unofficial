@@ -154,9 +154,12 @@ entities (e.g. HC2/HC3 by default) never subscribe, so their registers are
 automatically skipped without any manual entity-registry bookkeeping. If a
 user later enables a disabled entity, it starts polling on the very next
 cycle -- no reload or restart needed. If no context is registered yet
-(e.g. the very first refresh in `__init__.py`, which runs before entities
-are set up), the coordinator falls back to polling everything, since being
-unable to determine what's needed should never mean "fetch nothing".
+(the first refresh in `__init__.py`, which runs before entities are set
+up), the coordinator polls the registers with `enabled_default`;
+`async_setup_entry` refreshes again right after setting up the platforms,
+so entities enabled otherwise get their values right away. Nothing set up
+at startup relies on the first refresh reading a particular register:
+detection reads its registers directly.
 
 The registers to poll are grouped into blocks of adjacent or overlapping
 addresses (`build_read_blocks()`), and each block is read with a single
@@ -164,7 +167,14 @@ request, since the controller's Modbus gateway can drop connections under a
 long series of single-register requests. Blocks never span a gap between
 defined registers. If a block read returns an error response, its
 registers are read one by one so that a single unreadable register doesn't
-hide the others.
+hide the others. The same happens if a block isn't answered, not even after
+the retries, while the controller still answers a probe request
+(`PROBE_ADDRESS`, outdoor temperature; an error response counts): some
+controllers don't answer at all for a register they don't have. Without an
+answer to the probe the poll fails. A register that can't be read either
+way is left out of the block reads, logged once as a warning, and tried
+again on its own with a single attempt every `UNREADABLE_RETRY_SECONDS`
+(600 s); meanwhile its entity shows no value.
 
 This also means registers the integration only writes (e.g.
 `write_normal_setpoint_reg`/`write_eco_setpoint_reg` per heating circuit,
@@ -223,10 +233,11 @@ stops.
 the circuit options read at startup and the room temperature writers only
 handle present ones (`present_circuits`); `async_sync_flow_setpoint_raise`
 drops a remembered raise of a circuit that isn't there without writing.
-`_detect_present` in `__init__.py` fills missing options from the first
-poll (flow temperature / hot water temperature other than 0) and the entity
-registry (a circuit with an enabled entity); hot water is always present for
-an entry that already had options.
+`_async_detect_present` in `__init__.py` fills missing options from the
+entity registry (a circuit with an enabled entity) or by reading the flow
+temperature / hot water temperature directly (other than 0); hot water is
+always present for an entry that already had options. An option whose
+register isn't answered stays missing and is detected on the next start.
 
 Every platform adds its entities through `coordinator.add_entities`, which
 remembers their unique IDs; after the platforms are set up,
