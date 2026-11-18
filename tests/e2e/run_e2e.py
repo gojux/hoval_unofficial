@@ -47,6 +47,7 @@ COOLING_FLOW_SETPOINT_HC3 = 23756
 FLOW_MAX_HC1 = 30690
 # Buffer temperature of buffer module PS UnitId 142.
 BUFFER_MODULE_TEMP = 17324
+BUFFER_MODULE_SENSOR = "_buffer_module_142"
 # Low word of the buffer sensor (WPF, 27493/27494).
 BUFFER_SENSOR = 27494
 # The simulator leaves reads of the range between these unanswered.
@@ -802,8 +803,13 @@ def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
         raise SystemExit("The raise was not restored when a buffer module was found")
     wait_until_polling(token)
     print("OK: the raise is not offered with a buffer module")
+    wait_for_attribute(token, BUFFER_MODULE_SENSOR, lambda s: s["state"] == "45.2")
+    print("OK: the buffer module's temperature is shown")
     write_sim(BUFFER_MODULE_TEMP, 0)
     set_experimental(token, entry_id, flow_setpoint_raise=True)
+    # Kept like other enabled entities that are no longer provided.
+    wait_for_attribute(token, BUFFER_MODULE_SENSOR, lambda s: s["state"] == "unavailable")
+    print("OK: without the buffer module, its sensor is unavailable")
     wait_for_attribute(token, number, lambda s: s["state"] == "0.5")
     write_sim(FLOW_SETPOINT_RAISE_HC1, 13)
 

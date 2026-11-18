@@ -1223,13 +1223,18 @@ FLOW_SETPOINT_RAISE_STRATEGIES: tuple[int, ...] = (0, 1)
 # Buffer temperature of the buffer modules (PS) a heat pump can have, by
 # UnitId (datapoint 15 "Puffer PF/KPF2 Ist"). A plausible value means the
 # module exists: then the flow setpoint raise isn't offered (Hoval), and the
-# module's Smart Grid offsets are.
+# module's Smart Grid offsets and temperature sensor are. Not enabled by
+# default, so the first refresh doesn't read them on installations without a
+# module; the sensor of a found module is enabled and polls its register.
 BUFFER_MODULE_TEMP_REGISTERS: dict[int, RegisterDef] = {
     unit_id: RegisterDef(
         key=f"buffer_module_temp_{unit_id}",
         name=f"Buffer module {unit_id} temperature",
         address=address,
         scale=0.1,
+        unit="°C",
+        device_class="temperature",
+        enabled_default=False,
     )
     for unit_id, address in ((142, 17324), (143, 17386))
 }

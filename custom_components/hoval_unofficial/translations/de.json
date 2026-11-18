@@ -348,6 +348,12 @@
       "buffer_temp": {
         "name": "Pufferspeichertemperatur"
       },
+      "buffer_module_temp_142": {
+        "name": "Pufferspeichertemperatur Puffermodul 142"
+      },
+      "buffer_module_temp_143": {
+        "name": "Pufferspeichertemperatur Puffermodul 143"
+      },
       "flow_temp_hc1": {
         "name": "Vorlauf Ist-Temperatur Heizkreis 1"
       },

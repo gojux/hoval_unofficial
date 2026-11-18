@@ -12,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    BUFFER_MODULE_TEMP_REGISTERS,
     CIRCUIT_SENSOR_KEYS,
     COOLING_SENSOR_KEYS,
     CONTROLLER_ERROR_MAP,
@@ -37,6 +38,7 @@ from .const import (
     SMART_GRID_STATUS_OPTIONS,
     SMART_GRID_STATUS_REGISTER,
     SMART_GRID_STATUS_UNKNOWN,
+    buffer_module_key,
     cooling_enabled,
     present_circuits,
 )
@@ -70,6 +72,11 @@ async def async_setup_entry(
         for reg in SENSOR_REGISTERS
         if reg.key not in absent
     ]
+    entities.extend(
+        HovalSensor(coordinator, entry, reg, enabled=True)
+        for unit_id, reg in BUFFER_MODULE_TEMP_REGISTERS.items()
+        if entry.options.get(buffer_module_key(unit_id))
+    )
     entities.append(HovalStatusSensor(coordinator, entry))
     entities.append(HovalControllerErrorSensor(coordinator, entry))
     entities.append(HovalSmartGridStatusSensor(coordinator, entry))

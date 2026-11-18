@@ -358,6 +358,12 @@
       "buffer_temp": {
         "name": "Buffer temperature"
       },
+      "buffer_module_temp_142": {
+        "name": "Buffer temperature buffer module 142"
+      },
+      "buffer_module_temp_143": {
+        "name": "Buffer temperature buffer module 143"
+      },
       "flow_temp_hc1": {
         "name": "Current flow temperature HC1"
       },

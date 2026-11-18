@@ -116,7 +116,9 @@ offsets of the heating circuits (27531–27533) only at strategy 3, 4 or 5.
 
 Read when the integration starts and when the experimental functions are
 opened. A value other than 0 within -20 to 110 °C means the heat pump has a
-buffer module (PS); then the flow setpoint raise isn't offered (Hoval). An
+buffer module (PS); then the flow setpoint raise isn't offered (Hoval), and
+the module's buffer temperature is shown as a sensor
+(`buffer_module_temp_142` / `buffer_module_temp_143`). An
 error response or 0 means there is none. These registers belong to the
 buffer modules PS UnitId 142 and 143, not to the heat generator.
 
