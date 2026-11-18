@@ -12,7 +12,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    BUFFER_MODULE_TEMP_REGISTERS,
+    BUFFER_MODULE_SENSOR_REGISTERS,
+    BUFFER_SENSOR_REGISTER,
+    CONF_BUFFER_SENSOR,
     CIRCUIT_SENSOR_KEYS,
     COOLING_SENSOR_KEYS,
     CONTROLLER_ERROR_MAP,
@@ -38,7 +40,8 @@ from .const import (
     SMART_GRID_STATUS_OPTIONS,
     SMART_GRID_STATUS_REGISTER,
     SMART_GRID_STATUS_UNKNOWN,
-    buffer_module_key,
+    buffer_module_translation,
+    found_buffer_modules,
     cooling_enabled,
     present_circuits,
 )
@@ -60,6 +63,9 @@ async def async_setup_entry(
         if hc not in circuits
         for key in CIRCUIT_SENSOR_KEYS[hc.key]
     }
+    buffer_sensor = bool(entry.options.get(CONF_BUFFER_SENSOR))
+    if not buffer_sensor:
+        absent.add(BUFFER_SENSOR_REGISTER.key)
 
     cooling = cooling_enabled(entry.options)
     entities: list[SensorEntity] = [
@@ -67,15 +73,26 @@ async def async_setup_entry(
             coordinator,
             entry,
             reg,
-            enabled=True if cooling and reg.key in COOLING_SENSOR_KEYS else None,
+            enabled=(
+                True
+                if (cooling and reg.key in COOLING_SENSOR_KEYS)
+                or reg is BUFFER_SENSOR_REGISTER
+                else None
+            ),
         )
         for reg in SENSOR_REGISTERS
         if reg.key not in absent
     ]
     entities.extend(
-        HovalSensor(coordinator, entry, reg, enabled=True)
-        for unit_id, reg in BUFFER_MODULE_TEMP_REGISTERS.items()
-        if entry.options.get(buffer_module_key(unit_id))
+        HovalSensor(
+            coordinator,
+            entry,
+            reg,
+            enabled=True,
+            translation=buffer_module_translation(entry.options, unit_id, key),
+        )
+        for unit_id in found_buffer_modules(entry.options)
+        for reg, key in BUFFER_MODULE_SENSOR_REGISTERS[unit_id]
     )
     entities.append(HovalStatusSensor(coordinator, entry))
     entities.append(HovalControllerErrorSensor(coordinator, entry))
@@ -106,11 +123,16 @@ class HovalSensor(CoordinatorEntity[HovalModbusCoordinator], SensorEntity):
         entry: ConfigEntry,
         reg: RegisterDef,
         enabled: bool | None = None,
+        translation: tuple[str, dict[str, str]] | None = None,
     ) -> None:
         super().__init__(coordinator, context=[reg.key])
         self._reg = reg
         self._attr_unique_id = f"{entry.entry_id}_{reg.key}"
-        self._attr_translation_key = reg.key
+        # The register's key, or a translation key with placeholders.
+        if translation is None:
+            self._attr_translation_key = reg.key
+        else:
+            self._attr_translation_key, self._attr_translation_placeholders = translation
         self._attr_native_unit_of_measurement = reg.unit
         self._attr_device_class = reg.device_class
         self._attr_state_class = reg.state_class

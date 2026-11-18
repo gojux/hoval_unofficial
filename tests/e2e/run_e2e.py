@@ -47,7 +47,12 @@ COOLING_FLOW_SETPOINT_HC3 = 23756
 FLOW_MAX_HC1 = 30690
 # Buffer temperature of buffer module PS UnitId 142.
 BUFFER_MODULE_TEMP = 17324
-BUFFER_MODULE_SENSOR = "_buffer_module_142"
+# Second buffer sensor and buffer setpoint of the same module.
+BUFFER_MODULE_TEMP2 = 17325
+BUFFER_MODULE_SETPOINT = 17323
+# Buffer sensor PF of buffer module PS UnitId 143.
+BUFFER_MODULE_143_TEMP = 17386
+BUFFER_MODULE_SENSOR = "_buffer_temperature_pf"
 # Low word of the buffer sensor (WPF, 27493/27494).
 BUFFER_SENSOR = 27494
 # The simulator leaves reads of the range between these unanswered.
@@ -232,10 +237,10 @@ def set_silent_range(first: int, last: int) -> None:
 
 def check_unanswered_registers(token: str, entry_id: str) -> None:
     """Set up while SILENT_RANGE isn't answered: the integration starts, and
-    only the unanswered buffer temperature has no value."""
-    state = entity_state(token, "_buffer_temperature")
-    if state["state"] != "unknown":
-        raise SystemExit(f"Unanswered buffer temperature is {state['state']}")
+    the unanswered buffer sensor counts as missing."""
+    states = request("GET", "/api/states", token=token)
+    if any(s["entity_id"].endswith("_buffer_temperature_wpf") for s in states):
+        raise SystemExit("The buffer sensor exists although it doesn't answer")
     print("OK: an unanswered register doesn't keep the integration from starting")
     form = open_options_step(token, entry_id, "experimental")
     if form.get("type") != "form":
@@ -843,6 +848,8 @@ def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
 
     # Not with a buffer module.
     write_sim(BUFFER_MODULE_TEMP, 452)
+    write_sim(BUFFER_MODULE_TEMP2, 301)
+    write_sim(BUFFER_MODULE_SETPOINT, 500)
     form = open_options_step(token, entry_id, "experimental")
     if "experimental_flow_setpoint_raise" in form_fields(form):
         raise SystemExit("The flow setpoint raise is offered with a buffer module")
@@ -854,7 +861,26 @@ def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
     wait_until_polling(token)
     print("OK: the raise is not offered with a buffer module")
     wait_for_attribute(token, BUFFER_MODULE_SENSOR, lambda s: s["state"] == "45.2")
-    print("OK: the buffer module's temperature is shown")
+    wait_for_attribute(token, "_buffer_temperature_pf2", lambda s: s["state"] == "30.1")
+    wait_for_attribute(token, "_buffer_setpoint", lambda s: s["state"] == "50.0")
+    name = entity_state(token, BUFFER_MODULE_SENSOR)["attributes"].get("friendly_name", "")
+    if "module" in name:
+        raise SystemExit(f"A single buffer module is named with its number: {name}")
+    print("OK: the buffer module's temperatures and setpoint are shown")
+
+    # With both modules, their names include the module.
+    write_sim(BUFFER_MODULE_143_TEMP, 389)
+    # Saving the experimental functions detects the modules again.
+    submit_form(token, open_options_step(token, entry_id, "experimental"), {})
+    state = wait_for_attribute(
+        token, "_buffer_temperature_pf_buffer_module_143", lambda s: s["state"] == "38.9"
+    )
+    name = entity_state(token, BUFFER_MODULE_SENSOR)["attributes"].get("friendly_name", "")
+    if not name.endswith("buffer module 142"):
+        raise SystemExit(f"With two buffer modules, the first isn't named with its number: {name}")
+    print("OK: with two buffer modules, their names include the module")
+    write_sim(BUFFER_MODULE_143_TEMP, 0)
+
     write_sim(BUFFER_MODULE_TEMP, 0)
     set_experimental(token, entry_id, flow_setpoint_raise=True)
     # Kept like other enabled entities that are no longer provided.

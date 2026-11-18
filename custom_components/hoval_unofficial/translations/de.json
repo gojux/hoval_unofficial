@@ -235,10 +235,10 @@
         "name": "Smart Grid Offset Warmwasser"
       },
       "smart_grid_offset_buffer_heating": {
-        "name": "Smart Grid Offset Puffermodul 143 Heizen"
+        "name": "Smart Grid Offset Puffer Heizen"
       },
       "smart_grid_offset_buffer_cooling": {
-        "name": "Smart Grid Offset Puffermodul 143 Kühlen"
+        "name": "Smart Grid Offset Puffer Kühlen"
       },
       "cooling_flow_setpoint": {
         "name": "Vorlauf Soll Kühlen Heizkreis {circuit}"
@@ -249,11 +249,11 @@
       "constant_cooling_flow": {
         "name": "Vorlauf-Soll Konstant Kühlen Heizkreis {circuit}"
       },
-      "smart_grid_offset_buffer_142_heating": {
-        "name": "Smart Grid Offset Puffermodul 142 Heizen"
+      "smart_grid_offset_buffer_heating_module": {
+        "name": "Smart Grid Offset Puffermodul {module} Heizen"
       },
-      "smart_grid_offset_buffer_142_cooling": {
-        "name": "Smart Grid Offset Puffermodul 142 Kühlen"
+      "smart_grid_offset_buffer_cooling_module": {
+        "name": "Smart Grid Offset Puffermodul {module} Kühlen"
       }
     },
     "sensor": {
@@ -348,13 +348,7 @@
         "name": "Außentemperaturfühler"
       },
       "buffer_temp": {
-        "name": "Pufferspeichertemperatur"
-      },
-      "buffer_module_temp_142": {
-        "name": "Pufferspeichertemperatur Puffermodul 142"
-      },
-      "buffer_module_temp_143": {
-        "name": "Pufferspeichertemperatur Puffermodul 143"
+        "name": "Puffertemperatur WPF"
       },
       "flow_temp_hc1": {
         "name": "Vorlauf Ist-Temperatur Heizkreis 1"
@@ -474,6 +468,24 @@
       },
       "mixing_valve_hc3": {
         "name": "Mischer Heizkreis 3"
+      },
+      "buffer_pf": {
+        "name": "Puffertemperatur PF"
+      },
+      "buffer_pf_module": {
+        "name": "Puffertemperatur PF Puffermodul {module}"
+      },
+      "buffer_pf2": {
+        "name": "Puffertemperatur PF2"
+      },
+      "buffer_pf2_module": {
+        "name": "Puffertemperatur PF2 Puffermodul {module}"
+      },
+      "buffer_setpoint": {
+        "name": "Puffer-Soll"
+      },
+      "buffer_setpoint_module": {
+        "name": "Puffer-Soll Puffermodul {module}"
       }
     },
     "switch": {

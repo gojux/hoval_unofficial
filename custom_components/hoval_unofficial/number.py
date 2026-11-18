@@ -38,7 +38,8 @@ from .const import (
     SMART_GRID_OFFSET_DHW_REGISTER,
     dhw_present,
     present_circuits,
-    buffer_module_key,
+    buffer_module_translation,
+    found_buffer_modules,
     control_strategy_key,
     cooling_supported_key,
     flow_setpoint_raise_bounds,
@@ -69,7 +70,7 @@ async def async_setup_entry(
         *FLOW_SETPOINT_RAISE_REGISTERS,
         *SMART_GRID_HEATING_OFFSET_REGISTERS.values(),
         *SMART_GRID_COOLING_OFFSET_REGISTERS.values(),
-        *(reg for regs in SMART_GRID_BUFFER_OFFSET_REGISTERS.values() for reg in regs),
+        *(reg for regs in SMART_GRID_BUFFER_OFFSET_REGISTERS.values() for reg, _ in regs),
         SMART_GRID_OFFSET_DHW_REGISTER,
     ]
     entities = [
@@ -84,10 +85,14 @@ async def async_setup_entry(
     if dhw_present(options):
         entities.append(HovalNumber(coordinator, entry, SMART_GRID_OFFSET_DHW_REGISTER))
     entities.extend(
-        HovalNumber(coordinator, entry, reg)
-        for unit_id, regs in SMART_GRID_BUFFER_OFFSET_REGISTERS.items()
-        if options.get(buffer_module_key(unit_id))
-        for reg in regs
+        HovalNumber(
+            coordinator,
+            entry,
+            reg,
+            translation=buffer_module_translation(options, unit_id, key),
+        )
+        for unit_id in found_buffer_modules(options)
+        for reg, key in SMART_GRID_BUFFER_OFFSET_REGISTERS[unit_id]
     )
     entities.extend(
         HovalNumber(coordinator, entry, SMART_GRID_COOLING_OFFSET_REGISTERS[hc.key])
@@ -141,6 +146,7 @@ class HovalNumber(CoordinatorEntity[HovalModbusCoordinator], NumberEntity):
         reg: RegisterDef,
         enabled: bool | None = None,
         bounds: tuple[float, float] | None = None,
+        translation: tuple[str, dict[str, str]] | None = None,
     ) -> None:
         super().__init__(coordinator, context=[reg.key])
         self._reg = reg
@@ -150,7 +156,11 @@ class HovalNumber(CoordinatorEntity[HovalModbusCoordinator], NumberEntity):
         # once written and read back.
         self._epsilon = (reg.scale or 1) / 2
         self._attr_unique_id = f"{entry.entry_id}_{reg.key}"
-        self._attr_translation_key = reg.key
+        # The register's key, or a translation key with placeholders.
+        if translation is None:
+            self._attr_translation_key = reg.key
+        else:
+            self._attr_translation_key, self._attr_translation_placeholders = translation
         self._attr_native_unit_of_measurement = reg.unit
         self._attr_native_min_value = 0 if reg.min_value is None else reg.min_value
         self._attr_native_max_value = 100 if reg.max_value is None else reg.max_value

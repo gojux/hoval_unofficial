@@ -54,7 +54,7 @@ cool, have a buffer module (PS) or heating circuits on an extension module
 | 27484 | `heat_quantity_heating` | Wärmemenge Heizen (FA) | U32 | 0.001 MWh | R | y |
 | 27488 | `heat_quantity_hot_water` | Wärmemenge WW | U32 | 0.001 MWh | R | y |
 | 27490 | `cop` | Coefficient of Performance | U8 | 0.1 | R | y |
-| 27493 | `buffer_temp` | WPF Wärmepumpenpufferfühler | S32 | 0.1 | R | y |
+| 27493 | `buffer_temp` | WPF Wärmepumpenpufferfühler (only with a buffer sensor) | S32 | 0.1 | R | y |
 | 27495 | `heat_pump_circulation_pump_speed` | Drehzahl CP | S32 | 1 % | R | y |
 | 27537 | `smart_grid_status` | Status Smart Grid | U8 | enum | R | y |
 | 31707 | `heat_pump_flow_rate` | Volumenstrom gemittelt | S32 | 0.1 L/min | R | y |
@@ -117,14 +117,16 @@ offsets of the heating circuits (27531–27533) only at strategy 3, 4 or 5.
 Read when the integration starts and when the experimental functions are
 opened. A value other than 0 within -20 to 110 °C means the heat pump has a
 buffer module (PS); then the flow setpoint raise isn't offered (Hoval), and
-the module's buffer temperature is shown as a sensor
-(`buffer_module_temp_142` / `buffer_module_temp_143`). An
-error response or 0 means there is none. These registers belong to the
-buffer modules PS UnitId 142 and 143, not to the heat generator.
+the module's buffer sensors and setpoint are shown as sensors. An error
+response or 0 means there is none. These registers belong to the buffer
+modules PS UnitId 142 and 143, not to the heat generator. The module's
+UnitId is part of the entity names only if both modules are found.
 
-| Address | Datapoint (Hoval) | Type | Scale | Access | Verified |
-|---|---|---|---|---|---|
-| 17324 / 17386 | Puffer PF/KPF2 Ist (PS UnitId 142 / 143) | S16 | 0.1 | R | – |
+| Address | Key | Datapoint (Hoval) | Type | Scale | Access | Verified |
+|---|---|---|---|---|---|---|
+| 17324 / 17386 | `buffer_module_temp_142` / `_143` | Puffer PF/KPF2 Ist (PS UnitId 142 / 143), also the detection | S16 | 0.1 | R | y (143) |
+| 17325 / 17387 | `buffer_module_temp2_142` / `_143` | Puffer PF2/KPF Ist | S16 | 0.1 | R | – |
+| 17323 / 17385 | `buffer_module_setpoint_142` / `_143` | Puffer-Soll | S16 | 0.1 | R | – |
 
 ## Other registers checked on a real installation
 

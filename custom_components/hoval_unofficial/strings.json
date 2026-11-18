@@ -245,10 +245,10 @@
         "name": "Smart Grid offset DHW"
       },
       "smart_grid_offset_buffer_heating": {
-        "name": "Smart Grid Offset Buffer module 143 Heating"
+        "name": "Smart Grid Offset Buffer Heating"
       },
       "smart_grid_offset_buffer_cooling": {
-        "name": "Smart Grid Offset Buffer module 143 Cooling"
+        "name": "Smart Grid Offset Buffer Cooling"
       },
       "cooling_flow_setpoint": {
         "name": "Cooling flow setpoint heating circuit {circuit}"
@@ -259,11 +259,11 @@
       "constant_cooling_flow": {
         "name": "Constant cooling flow setpoint heating circuit {circuit}"
       },
-      "smart_grid_offset_buffer_142_heating": {
-        "name": "Smart Grid Offset Buffer module 142 Heating"
+      "smart_grid_offset_buffer_heating_module": {
+        "name": "Smart Grid Offset Buffer module {module} Heating"
       },
-      "smart_grid_offset_buffer_142_cooling": {
-        "name": "Smart Grid Offset Buffer module 142 Cooling"
+      "smart_grid_offset_buffer_cooling_module": {
+        "name": "Smart Grid Offset Buffer module {module} Cooling"
       }
     },
     "sensor": {
@@ -358,13 +358,7 @@
         "name": "Outdoor temperature"
       },
       "buffer_temp": {
-        "name": "Buffer temperature"
-      },
-      "buffer_module_temp_142": {
-        "name": "Buffer temperature buffer module 142"
-      },
-      "buffer_module_temp_143": {
-        "name": "Buffer temperature buffer module 143"
+        "name": "Buffer temperature WPF"
       },
       "flow_temp_hc1": {
         "name": "Current flow temperature HC1"
@@ -484,6 +478,24 @@
       },
       "mixing_valve_hc3": {
         "name": "Mixing valve HC3"
+      },
+      "buffer_pf": {
+        "name": "Buffer temperature PF"
+      },
+      "buffer_pf_module": {
+        "name": "Buffer temperature PF buffer module {module}"
+      },
+      "buffer_pf2": {
+        "name": "Buffer temperature PF2"
+      },
+      "buffer_pf2_module": {
+        "name": "Buffer temperature PF2 buffer module {module}"
+      },
+      "buffer_setpoint": {
+        "name": "Buffer setpoint"
+      },
+      "buffer_setpoint_module": {
+        "name": "Buffer setpoint buffer module {module}"
       }
     },
     "switch": {

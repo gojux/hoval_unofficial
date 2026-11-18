@@ -83,9 +83,12 @@ entry's three-dot menu → **Reconfigure**.
   pump's flow rate and the speed of its circulation pump are available as
   sensors too, also disabled by default; they help to check the hydraulics,
   e.g. whether a heating circuit pumps more water than the heat pump.
-  If the heat pump has a buffer module (PS, UnitId 142 or 143), its buffer
-  temperature is shown as well, next to the buffer sensor (WPF) of the heat
-  pump.
+  Buffer temperatures: **Buffer temperature WPF** for the heat pump's own
+  buffer sensor, and for a buffer module (PS, UnitId 142 or 143) its two
+  buffer sensors **Buffer temperature PF / PF2** and its **Buffer
+  setpoint**. Each only if the integration finds it: when it is set up and
+  whenever the experimental functions are opened. With both buffer modules,
+  their names include the module's UnitId.
 - **Domestic hot water (DHW)** — a `water_heater` entity showing tank
   temperature, target temperature, and operating mode.
 - **Room heating circuits (HC1/HC2/HC3)** — `climate` entities for up to

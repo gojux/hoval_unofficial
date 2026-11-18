@@ -31,7 +31,7 @@ from .const import (
     DataType,
     RegisterDef,
     RegisterType,
-    BUFFER_MODULE_TEMP_REGISTERS,
+    BUFFER_MODULE_SENSOR_REGISTERS,
     SENSOR_REGISTERS,
     NUMBER_REGISTERS,
     DHW_REGISTERS,
@@ -52,7 +52,7 @@ ALL_REGISTERS: list[RegisterDef] = (
     + STATUS_REGISTERS
     + HEATING_CIRCUIT_REGISTERS
     + SMART_GRID_REGISTERS
-    + list(BUFFER_MODULE_TEMP_REGISTERS.values())
+    + [reg for regs in BUFFER_MODULE_SENSOR_REGISTERS.values() for reg, _ in regs]
 )
 
 # Modbus allows at most 125 registers per read request.

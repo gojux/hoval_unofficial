@@ -78,8 +78,11 @@ integration. For installation and usage as an end user, see
   entity actually reads (see "Selective polling" below).
 - `const.py` – register map for a real Hoval controller; addresses and
   their verification status are listed in [REGISTERS.md](REGISTERS.md)
-- `sensor.py` – creates HA sensors from `SENSOR_REGISTERS` and the buffer
-  temperature of each found buffer module (`buffer_module_key`), plus
+- `sensor.py` – creates HA sensors from `SENSOR_REGISTERS` (the buffer
+  sensor `buffer_temp` only with `CONF_BUFFER_SENSOR`) and the sensors of
+  each found buffer module (`BUFFER_MODULE_SENSOR_REGISTERS`, named by
+  `buffer_module_translation`: with the UnitId only if both modules are
+  found, as the buffer Smart Grid offsets in `number.py`), plus
   dedicated enum sensors (device_class `enum`) that translate raw codes
   into localized texts (English/German): `HovalStatusSensor` (status),
   `HovalControllerErrorSensor` (error code, 255 = no error), the Smart

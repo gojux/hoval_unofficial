@@ -121,6 +121,9 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         unit="°C",
         device_class="temperature",
     ),
+    # Only polled with a buffer sensor (CONF_BUFFER_SENSOR): without one, some
+    # controllers don't answer for it, so the first refresh doesn't read it;
+    # the sensor is created and enabled once a buffer sensor is found.
     RegisterDef(
         key="buffer_temp",
         name="Buffer temperature",
@@ -129,6 +132,7 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         scale=0.1,
         unit="°C",
         device_class="temperature",
+        enabled_default=False,
     ),
 
     # --- Efficiency / live power ---
@@ -1244,6 +1248,46 @@ BUFFER_MODULE_TEMP_REGISTERS: dict[int, RegisterDef] = {
     for unit_id, address in ((142, 17324), (143, 17386))
 }
 BUFFER_MODULE_TEMP_RANGE = (-20.0, 110.0)
+
+
+def _buffer_module_register(key: str, name: str, address: int) -> RegisterDef:
+    return RegisterDef(
+        key=key,
+        name=name,
+        address=address,
+        scale=0.1,
+        unit="°C",
+        device_class="temperature",
+        enabled_default=False,
+    )
+
+
+# The sensors of a found buffer module, by UnitId, with their translation key:
+# buffer sensor PF (the detection register above), second buffer sensor PF2
+# (datapoint 17 "Puffer PF2/KPF Ist") and buffer setpoint (datapoint 1015
+# "Puffer-Soll"), next to it in the datapoint list.
+BUFFER_MODULE_SENSOR_REGISTERS: dict[int, tuple[tuple[RegisterDef, str], ...]] = {
+    unit_id: (
+        (reg, "buffer_pf"),
+        (
+            _buffer_module_register(
+                f"buffer_module_temp2_{unit_id}",
+                f"Buffer module {unit_id} temperature PF2",
+                reg.address + 1,
+            ),
+            "buffer_pf2",
+        ),
+        (
+            _buffer_module_register(
+                f"buffer_module_setpoint_{unit_id}",
+                f"Buffer module {unit_id} setpoint",
+                reg.address - 1,
+            ),
+            "buffer_setpoint",
+        ),
+    )
+    for unit_id, reg in BUFFER_MODULE_TEMP_REGISTERS.items()
+}
 # Options storage key for whether any buffer module was found, read when the
 # integration starts (if not stored yet) and whenever the experimental
 # functions are opened; buffer_module_key() for each module.
@@ -1253,6 +1297,26 @@ CONF_BUFFER_MODULE = "buffer_module"
 def buffer_module_key(unit_id: int) -> str:
     """Options storage key for whether the buffer module was found."""
     return f"buffer_module_{unit_id}"
+
+
+def found_buffer_modules(options: Mapping[str, Any]) -> list[int]:
+    """The UnitIds of the buffer modules found."""
+    return [
+        unit_id
+        for unit_id in BUFFER_MODULE_TEMP_REGISTERS
+        if options.get(buffer_module_key(unit_id))
+    ]
+
+
+def buffer_module_translation(
+    options: Mapping[str, Any], unit_id: int, translation_key: str
+) -> tuple[str, dict[str, str]]:
+    """Translation key and placeholders of a buffer module's entity: the
+    module's UnitId is part of the name only if more than one module was
+    found."""
+    if len(found_buffer_modules(options)) > 1:
+        return f"{translation_key}_module", {"module": str(unit_id)}
+    return translation_key, {}
 
 
 def buffer_module_temp_plausible(value: float | None) -> bool:
@@ -1635,14 +1699,14 @@ NUMBER_REGISTERS.extend(
 # Smart Grid offsets only offered where they can have an effect: each buffer
 # module's while it is found, each circuit's cooling offset at a strategy
 # with cooling or constant control.
-SMART_GRID_BUFFER_OFFSET_REGISTERS: dict[int, tuple[RegisterDef, RegisterDef]] = {
+SMART_GRID_BUFFER_OFFSET_REGISTERS: dict[int, tuple[tuple[RegisterDef, str], ...]] = {
     142: (
-        SMART_GRID_OFFSET_BUFFER_142_HEATING_REGISTER,
-        SMART_GRID_OFFSET_BUFFER_142_COOLING_REGISTER,
+        (SMART_GRID_OFFSET_BUFFER_142_HEATING_REGISTER, "smart_grid_offset_buffer_heating"),
+        (SMART_GRID_OFFSET_BUFFER_142_COOLING_REGISTER, "smart_grid_offset_buffer_cooling"),
     ),
     143: (
-        SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER,
-        SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER,
+        (SMART_GRID_OFFSET_BUFFER_HEATING_REGISTER, "smart_grid_offset_buffer_heating"),
+        (SMART_GRID_OFFSET_BUFFER_COOLING_REGISTER, "smart_grid_offset_buffer_cooling"),
     ),
 }
 SMART_GRID_COOLING_OFFSET_REGISTERS: dict[str, RegisterDef] = {
