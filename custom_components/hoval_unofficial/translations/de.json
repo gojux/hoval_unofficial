@@ -49,6 +49,7 @@
         "data": {
           "scan_interval": "Abfrageintervall (Sekunden)",
           "timeout": "Modbus-Timeout pro Anfrage (Sekunden)",
+          "message_spacing": "Abstand zwischen Modbus-Anfragen (Millisekunden)",
           "heating_circuit_2_present": "Heizkreis 2 vorhanden",
           "heating_circuit_3_present": "Heizkreis 3 vorhanden",
           "dhw_present": "Warmwasser vorhanden"
@@ -56,6 +57,7 @@
         "data_description": {
           "scan_interval": "Empfohlen: 20 Sekunden oder weniger. Das Hoval-Gateway lässt länger ungenutzte Verbindungen fallen, danach dauert jede Abfrage einige Sekunden länger.",
           "timeout": "Standard: 3 s. Teilen sich mehrere Integrationen das Gateway, gilt der längste Timeout.",
+          "message_spacing": "Standard: 0 (kein Abstand). Kann helfen, wenn das Gateway direkt aufeinanderfolgende Anfragen manchmal nicht beantwortet. Gilt für alle Anfragen an diese Geräte-ID über die geteilte Verbindung, auch die anderer Integrationen, und verlängert jede Abfrage.",
           "heating_circuit_2_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
           "heating_circuit_3_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
           "dhw_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür."

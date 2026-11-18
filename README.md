@@ -462,6 +462,12 @@ Devices & Services → Hoval Heat Pump Integration (unofficial)**:
   integrations use the same gateway, the longest timeout any of them
   asks for applies.
   <!-- HA-COMPAT(2026.10): drop the version note. -->
+- **Gap between Modbus requests** (milliseconds, 0-2000, default 0) — a
+  pause Home Assistant's shared Modbus connection keeps around each request
+  to the controller's device ID. Can help if the gateway sometimes doesn't
+  answer requests sent right after each other. It applies to every request
+  to this device ID, also those of other integrations, and each poll takes
+  longer by about the gap times the number of requests.
 - **Heating circuit 2 / 3 present, Domestic hot water present** — without
   them, the integration neither creates their entities nor reads or writes
   their values, and the options menu doesn't list them. Heating circuit 1 is

@@ -170,9 +170,17 @@ defined registers. If a block read returns an error response, its
 registers are read one by one so that a single unreadable register doesn't
 hide the others. The same happens if a block isn't answered, not even after
 the retries, while the controller still answers a probe request
-(`PROBE_ADDRESS`, outdoor temperature; an error response counts): some
-controllers don't answer at all for a register they don't have. Without an
-answer to the probe the poll fails. A register that can't be read either
+(`PROBE_ADDRESSES`: outdoor temperature, then heat generator status with a
+single attempt, for a controller that doesn't answer the first one itself;
+an error response counts): some controllers don't answer at all for a
+register they don't have. Without an answer to either probe the poll fails.
+Reading the buffer registers for the buffer detection follows the same
+rule (`async_read_value_if_present(..., unanswered_absent=True)`): a
+register without an answer counts as missing. A register polling already left out
+as unreadable isn't asked again there, so the experimental functions open
+right away. The optional gap between requests (`CONF_MESSAGE_SPACING`, ms)
+is passed to `set_message_spacing` of the shared connection only when set,
+and set back to 0 on unload. A register that can't be read either
 way is left out of the block reads, logged once as a warning, and tried
 again on its own with a single attempt every `UNREADABLE_RETRY_SECONDS`
 (600 s); meanwhile its entity shows no value.

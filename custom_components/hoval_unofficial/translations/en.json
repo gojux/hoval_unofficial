@@ -49,6 +49,7 @@
         "data": {
           "scan_interval": "Polling interval (seconds)",
           "timeout": "Modbus request timeout (seconds)",
+          "message_spacing": "Gap between Modbus requests (milliseconds)",
           "heating_circuit_2_present": "Heating circuit 2 present",
           "heating_circuit_3_present": "Heating circuit 3 present",
           "dhw_present": "Domestic hot water present"
@@ -56,6 +57,7 @@
         "data_description": {
           "scan_interval": "20 seconds or less recommended: the Hoval gateway drops connections that are idle for longer, and every poll after that takes several seconds longer.",
           "timeout": "Default: 3 s. If several integrations share the gateway, the longest timeout applies.",
+          "message_spacing": "Default: 0 (no gap). Can help if the gateway sometimes doesn't answer requests sent right after each other. Applies to all requests to this device ID over the shared connection, also those of other integrations, and makes each poll take longer.",
           "heating_circuit_2_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
           "heating_circuit_3_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
           "dhw_present": "Without it, the integration neither creates its entities nor reads or writes its values."

@@ -35,6 +35,8 @@ from .const import (
     CURRENT_TEMP_SOURCE_ENTITY_WRITE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TIMEOUT,
+    CONF_MESSAGE_SPACING,
+    DEFAULT_MESSAGE_SPACING,
     DOMAIN,
     HEATING_CIRCUITS,
     HeatingCircuit,
@@ -92,6 +94,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_id,
         scan_interval,
         entry.options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+        entry.options.get(CONF_MESSAGE_SPACING, DEFAULT_MESSAGE_SPACING),
     )
     await coordinator.async_config_entry_first_refresh()
 
@@ -264,15 +267,18 @@ async def _async_detect_present(
 
 async def async_read_buffers(coordinator: HovalModbusCoordinator) -> dict[str, bool]:
     """Which buffer modules (PS) the heat pump has, and whether it has a
-    buffer sensor (WPF), as options to store. Raises UpdateFailed."""
+    buffer sensor (WPF), as options to store. A register the controller
+    doesn't answer for counts as missing. Raises UpdateFailed."""
     options: dict[str, bool] = {}
     for unit_id, reg in BUFFER_MODULE_TEMP_REGISTERS.items():
         options[buffer_module_key(unit_id)] = buffer_module_temp_plausible(
-            await coordinator.async_read_value_if_present(reg)
+            await coordinator.async_read_value_if_present(reg, unanswered_absent=True)
         )
     options[CONF_BUFFER_MODULE] = any(options.values())
     options[CONF_BUFFER_SENSOR] = bool(
-        await coordinator.async_read_value_if_present(BUFFER_SENSOR_REGISTER)
+        await coordinator.async_read_value_if_present(
+            BUFFER_SENSOR_REGISTER, unanswered_absent=True
+        )
     )
     return options
 

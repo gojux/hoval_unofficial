@@ -83,9 +83,11 @@ RETRY_DELAY = 1.0  # seconds
 UNREADABLE_RETRY_SECONDS = 600
 
 # Read after a request that wasn't answered, to tell whether the controller
-# still answers at all: outdoor temperature, which every controller has. An
-# error code counts as an answer as well.
-PROBE_ADDRESS = 1477
+# still answers at all: outdoor temperature and heat generator status, which
+# every controller has. An answer to either counts, an error code as well.
+# The second one is asked with a single attempt, for a controller that
+# doesn't answer the first one itself.
+PROBE_ADDRESSES = (1477, 1539)
 
 
 @dataclass(frozen=True)
@@ -282,6 +284,7 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         device_id: int,
         scan_interval: int,
         timeout: float | None = None,
+        message_spacing: int = 0,
     ) -> None:
         super().__init__(
             hass,
@@ -302,6 +305,11 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         if timeout is not None and timeout_supported():
             self.unit.require_timeout(timeout)
             entry.async_on_unload(lambda: self.unit.require_timeout(None))
+        # Only set when chosen, so a gap set elsewhere for this device ID
+        # stays as it is otherwise.
+        if message_spacing:
+            self.unit.set_message_spacing(message_spacing / 1000)
+            entry.async_on_unload(lambda: self.unit.set_message_spacing(0))
         # Heating circuit key -> RoomTempWriter (room_temp.py), for the
         # circuits sending a room temperature to the controller.
         self.room_temp_writers: dict[str, Any] = {}
@@ -439,14 +447,20 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
 
     async def _async_raise_unless_answering(self, err: ModbusError) -> None:
         """After a request that wasn't answered (`err`), raises `err` unless
-        the controller still answers other requests (see PROBE_ADDRESS)."""
-        try:
-            await read_registers(self.unit, "holding", PROBE_ADDRESS, 1)
-        except ModbusExceptionError:
+        the controller still answers other requests (see PROBE_ADDRESSES)."""
+        for attempts, address in enumerate(PROBE_ADDRESSES, start=1):
+            try:
+                await read_registers(
+                    self.unit, "holding", address, 1, REQUEST_ATTEMPTS if attempts == 1 else 1
+                )
+            except ModbusExceptionError:
+                return
+            except ModbusError as probe_err:
+                _LOGGER.debug("No answer to the probe at %s: %s", address, probe_err)
+                continue
             return
-        except ModbusError as probe_err:
-            _LOGGER.debug("The controller doesn't answer any request: %s", probe_err)
-            raise err from None
+        _LOGGER.debug("The controller doesn't answer any request")
+        raise err from None
 
     def _mark_unreadable(self, reg: RegisterDef, err: ModbusError) -> None:
         """Leaves a register out of the block reads (see
@@ -488,12 +502,30 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         offset = await self.async_read_value_if_present(offset_reg)
         return offset if offset is not None else 0.0
 
-    async def async_read_value_if_present(self, reg: RegisterDef) -> float | None:
+    async def async_read_value_if_present(
+        self, reg: RegisterDef, unanswered_absent: bool = False
+    ) -> float | None:
         """Reads a register directly; None if the controller answers that it
-        doesn't have it. Raises UpdateFailed on other errors."""
+        doesn't have it, or, with `unanswered_absent`, doesn't answer for it
+        while it still answers other requests (as in polling). Raises
+        UpdateFailed on other errors. With `unanswered_absent`, a register
+        polling already left out as unreadable isn't asked again."""
+        if unanswered_absent and reg.key in self._unreadable:
+            return None
         try:
             return await read_register(self.unit, reg)
         except ModbusExceptionError:
+            return None
+        except FAILED_ANSWER_ERRORS as err:
+            if not unanswered_absent:
+                raise UpdateFailed(f"Modbus error while reading {reg.key}: {err}") from err
+            try:
+                await self._async_raise_unless_answering(err)
+            except ModbusError as probe_err:
+                raise UpdateFailed(
+                    f"Modbus error while reading {reg.key}: {probe_err}"
+                ) from probe_err
+            _LOGGER.debug("No answer for %s (address %s)", reg.key, reg.address)
             return None
         except ModbusError as err:
             raise UpdateFailed(f"Modbus error while reading {reg.key}: {err}") from err

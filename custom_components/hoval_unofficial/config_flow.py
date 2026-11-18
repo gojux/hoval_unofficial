@@ -46,6 +46,9 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TIMEOUT,
+    CONF_MESSAGE_SPACING,
+    DEFAULT_MESSAGE_SPACING,
+    MAX_MESSAGE_SPACING,
     DOMAIN,
     FLOW_SETPOINT_RAISE_REGISTERS,
     FLOW_SETPOINT_RAISE_STRATEGIES,
@@ -487,6 +490,7 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
             options.pop(CONF_SCAN_INTERVAL, None)
             # An emptied timeout field goes back to DEFAULT_TIMEOUT.
             options.pop(CONF_TIMEOUT, None)
+            options.pop(CONF_MESSAGE_SPACING, None)
             options.update(user_input)
             # A circuit that sends a room temperature has to stop first, in
             # its own form.
@@ -526,6 +530,16 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
                     },
                 )
             ] = vol.All(vol.Coerce(float), vol.Range(min=MIN_TIMEOUT, max=MAX_TIMEOUT))
+        schema[
+            vol.Optional(
+                CONF_MESSAGE_SPACING,
+                description={
+                    "suggested_value": self.config_entry.options.get(
+                        CONF_MESSAGE_SPACING, DEFAULT_MESSAGE_SPACING
+                    )
+                },
+            )
+        ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_MESSAGE_SPACING))
         options = self.config_entry.options
         for hc in HEATING_CIRCUITS:
             if hc is not HEATING_CIRCUIT_1:

@@ -27,6 +27,11 @@ MAX_SCAN_INTERVAL = 300
 DEFAULT_TIMEOUT = 3.0
 MIN_TIMEOUT = 1.0
 MAX_TIMEOUT = 60.0
+# Minimum gap around each request to the controller, in milliseconds, kept by
+# Home Assistant's shared Modbus connection for this device ID. 0 = no gap.
+CONF_MESSAGE_SPACING = "message_spacing"
+DEFAULT_MESSAGE_SPACING = 0
+MAX_MESSAGE_SPACING = 2000
 
 RegisterType = Literal["holding", "input"]
 DataType = Literal["int16", "uint16", "int32", "uint32", "float32"]

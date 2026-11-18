@@ -56,6 +56,8 @@ SIM_SILENT_LAST = 65001
 # Buffer sensor (27493/27494, enabled by default) and heat pump circulation
 # pump speed (27495/27496, disabled by default).
 SILENT_RANGE = (27493, 27496)
+# Outdoor temperature, the first probe of whether the controller answers.
+PROBE_ADDRESS = 1477
 # The room setpoint is sent after 5 minutes without a usable value.
 FALLBACK_TIMEOUT_SECONDS = 6 * 60
 
@@ -228,14 +230,31 @@ def set_silent_range(first: int, last: int) -> None:
     write_sim(SIM_SILENT_FIRST, first)
 
 
-def check_unanswered_registers(token: str) -> None:
+def check_unanswered_registers(token: str, entry_id: str) -> None:
     """Set up while SILENT_RANGE isn't answered: the integration starts, and
     only the unanswered buffer temperature has no value."""
     state = entity_state(token, "_buffer_temperature")
     if state["state"] != "unknown":
         raise SystemExit(f"Unanswered buffer temperature is {state['state']}")
-    set_silent_range(0, 0)
     print("OK: an unanswered register doesn't keep the integration from starting")
+    form = open_options_step(token, entry_id, "experimental")
+    if form.get("type") != "form":
+        raise SystemExit(f"Experimental functions don't open: {form}")
+    submit_form(token, form, {})
+    wait_until_polling(token)
+    print("OK: experimental functions open with an unanswered buffer register")
+    # The outdoor temperature is the first probe; without an answer for it,
+    # the second one tells that the controller still answers.
+    set_silent_range(PROBE_ADDRESS, PROBE_ADDRESS)
+    wait_for_attribute(token, "_outdoor_temperature", lambda s: s["state"] == "unknown")
+    state = entity_state(token, "sensor.e2e_heat_pump_status")
+    if state["state"] in ("unknown", "unavailable"):
+        raise SystemExit(f"Polling stopped without the outdoor temperature: {state}")
+    set_silent_range(0, 0)
+    # A reload reads the outdoor temperature again right away.
+    request("POST", f"/api/config/config_entries/entry/{entry_id}/reload", token=token)
+    wait_until_polling(token)
+    print("OK: polling goes on while the outdoor temperature isn't answered")
 
 
 def set_source_state(token: str, value: str) -> None:
@@ -335,6 +354,37 @@ def check_timeout_option(token: str, entry_id: str) -> None:
         raise SystemExit(f"Timeout did not go back to the default: {field}")
     wait_until_polling(token)
     print(f"OK: timeout option works on Home Assistant {version}")
+
+
+def submit_general_and_wait_for_reload(token: str, entry_id: str, data: dict) -> None:
+    """Saves the general options and waits until the entry has reloaded: with
+    a gap, a poll takes several seconds and the reload waits for it, while
+    the entities of the old entry still show values."""
+    before = entity_state(token, "_outdoor_temperature")["last_updated"]
+    result = submit_form(token, open_general_form(token, entry_id), data)
+    if result.get("type") != "create_entry":
+        raise SystemExit(f"Options flow did not save: {result}")
+    wait_for_attribute(
+        token,
+        "_outdoor_temperature",
+        lambda s: s["last_updated"] != before and s["state"] not in ("unknown", "unavailable"),
+    )
+
+
+def check_message_spacing_option(token: str, entry_id: str) -> None:
+    submit_general_and_wait_for_reload(
+        token, entry_id, {"scan_interval": 30, "message_spacing": 200}
+    )
+    field = form_fields(open_general_form(token, entry_id))["message_spacing"]
+    if (field.get("description") or {}).get("suggested_value") != 200:
+        raise SystemExit(f"Gap was not stored: {field}")
+
+    # An emptied field goes back to no gap.
+    submit_general_and_wait_for_reload(token, entry_id, {"scan_interval": 30})
+    field = form_fields(open_general_form(token, entry_id))["message_spacing"]
+    if (field.get("description") or {}).get("suggested_value") != 0:
+        raise SystemExit(f"Gap did not go back to the default: {field}")
+    print("OK: the gap between requests is stored and polling goes on")
 
 
 def form_fields(form: dict) -> dict:
@@ -1069,9 +1119,10 @@ def main() -> None:
     entry_id = add_integration(token)
     states = wait_for_states(token)
     check(states)
-    check_unanswered_registers(token)
+    check_unanswered_registers(token, entry_id)
     check_diagnostics(token, entry_id)
     check_timeout_option(token, entry_id)
+    check_message_spacing_option(token, entry_id)
     check_sending(token, entry_id)
     check_reading_room_sensor(token, entry_id)
     check_sensor_detection(token, entry_id)
