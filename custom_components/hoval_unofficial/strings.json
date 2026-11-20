@@ -259,11 +259,17 @@
       "constant_cooling_flow": {
         "name": "Constant cooling flow setpoint heating circuit {circuit}"
       },
-      "smart_grid_offset_buffer_heating_module": {
-        "name": "Smart Grid Offset Buffer module {module} Heating"
+      "smart_grid_offset_heating_buffer_heating": {
+        "name": "Smart Grid Offset Heating buffer Heating"
       },
-      "smart_grid_offset_buffer_cooling_module": {
-        "name": "Smart Grid Offset Buffer module {module} Cooling"
+      "smart_grid_offset_heating_buffer_cooling": {
+        "name": "Smart Grid Offset Heating buffer Cooling"
+      },
+      "smart_grid_offset_cooling_buffer_heating": {
+        "name": "Smart Grid Offset Cooling buffer Heating"
+      },
+      "smart_grid_offset_cooling_buffer_cooling": {
+        "name": "Smart Grid Offset Cooling buffer Cooling"
       }
     },
     "sensor": {
@@ -458,6 +464,9 @@
       "cop": {
         "name": "Coefficient of Performance (COP)"
       },
+      "seasonal_performance_factor": {
+        "name": "Seasonal performance factor (SPF)"
+      },
       "operating_hours_heat_generator": {
         "name": "Operating hours heat generator"
       },
@@ -479,23 +488,32 @@
       "mixing_valve_hc3": {
         "name": "Mixing valve HC3"
       },
-      "buffer_pf": {
-        "name": "Buffer temperature PF"
+      "buffer_top": {
+        "name": "Buffer temperature top"
       },
-      "buffer_pf_module": {
-        "name": "Buffer temperature PF buffer module {module}"
-      },
-      "buffer_pf2": {
-        "name": "Buffer temperature PF2"
-      },
-      "buffer_pf2_module": {
-        "name": "Buffer temperature PF2 buffer module {module}"
+      "buffer_bottom": {
+        "name": "Buffer temperature bottom"
       },
       "buffer_setpoint": {
         "name": "Buffer setpoint"
       },
-      "buffer_setpoint_module": {
-        "name": "Buffer setpoint buffer module {module}"
+      "heating_buffer_top": {
+        "name": "Heating buffer temperature top"
+      },
+      "heating_buffer_bottom": {
+        "name": "Heating buffer temperature bottom"
+      },
+      "heating_buffer_setpoint": {
+        "name": "Heating buffer setpoint"
+      },
+      "cooling_buffer_top": {
+        "name": "Cooling buffer temperature top"
+      },
+      "cooling_buffer_bottom": {
+        "name": "Cooling buffer temperature bottom"
+      },
+      "cooling_buffer_setpoint": {
+        "name": "Cooling buffer setpoint"
       }
     },
     "switch": {

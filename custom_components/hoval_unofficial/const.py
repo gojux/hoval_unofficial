@@ -145,6 +145,14 @@ SENSOR_REGISTERS: list[RegisterDef] = [
         precision=1,
     ),
     RegisterDef(
+        key="seasonal_performance_factor",
+        name="Seasonal performance factor (SPF)",
+        address=27467,
+        data_type="uint16",
+        scale=0.1,
+        precision=1,
+    ),
+    RegisterDef(
         key="current_power_output",
         name="Current power output",
         address=18731,
@@ -1229,28 +1237,9 @@ def constant_heating_range(
 # compensated, with or without room influence.
 FLOW_SETPOINT_RAISE_STRATEGIES: tuple[int, ...] = (0, 1)
 
-# Buffer temperature of the buffer modules (PS) a heat pump can have, by
-# UnitId (datapoint 15 "Puffer PF/KPF2 Ist"). A plausible value means the
-# module exists: then the flow setpoint raise isn't offered (Hoval), and the
-# module's Smart Grid offsets and temperature sensor are. Not enabled by
-# default, so the first refresh doesn't read them on installations without a
-# module; the sensor of a found module is enabled and polls its register.
-BUFFER_MODULE_TEMP_REGISTERS: dict[int, RegisterDef] = {
-    unit_id: RegisterDef(
-        key=f"buffer_module_temp_{unit_id}",
-        name=f"Buffer module {unit_id} temperature",
-        address=address,
-        scale=0.1,
-        unit="°C",
-        device_class="temperature",
-        enabled_default=False,
-    )
-    for unit_id, address in ((142, 17324), (143, 17386))
-}
-BUFFER_MODULE_TEMP_RANGE = (-20.0, 110.0)
-
-
 def _buffer_module_register(key: str, name: str, address: int) -> RegisterDef:
+    # Not enabled by default, so the first refresh doesn't read them on
+    # installations without a module.
     return RegisterDef(
         key=key,
         name=name,
@@ -1262,41 +1251,68 @@ def _buffer_module_register(key: str, name: str, address: int) -> RegisterDef:
     )
 
 
-# The sensors of a found buffer module, by UnitId, with their translation key:
-# buffer sensor PF (the detection register above), second buffer sensor PF2
-# (datapoint 17 "Puffer PF2/KPF Ist") and buffer setpoint (datapoint 1015
-# "Puffer-Soll"), next to it in the datapoint list.
+# Buffer sensors of the buffer modules (PS) a heat pump can have, by UnitId:
+# datapoint 15 "Puffer PF/KPF2 Ist" at the top of the buffer and datapoint 17
+# "Puffer PF2/KPF Ist" at its bottom. A plausible value of either means the
+# module exists: then the flow setpoint raise isn't offered (Hoval), and the
+# module's sensors and Smart Grid offsets are. A module doesn't need both:
+# a heating buffer alone has only the top one, a separate cooling buffer
+# (module 142 next to the heating buffer in 143) only the bottom one.
+BUFFER_MODULE_TEMP_REGISTERS: dict[int, tuple[RegisterDef, RegisterDef]] = {
+    unit_id: (
+        _buffer_module_register(
+            f"buffer_module_temp_{unit_id}",
+            f"Buffer module {unit_id} temperature top",
+            address,
+        ),
+        _buffer_module_register(
+            f"buffer_module_temp2_{unit_id}",
+            f"Buffer module {unit_id} temperature bottom",
+            address + 1,
+        ),
+    )
+    for unit_id, address in ((142, 17324), (143, 17386))
+}
+BUFFER_MODULE_TEMP_RANGE = (-20.0, 110.0)
+
+# The sensors of a found buffer module, by UnitId, with their translation
+# key: the two buffer sensors above and the buffer setpoint (datapoint 1015
+# "Puffer-Soll"), next to them in the datapoint list.
 BUFFER_MODULE_SENSOR_REGISTERS: dict[int, tuple[tuple[RegisterDef, str], ...]] = {
     unit_id: (
-        (reg, "buffer_pf"),
-        (
-            _buffer_module_register(
-                f"buffer_module_temp2_{unit_id}",
-                f"Buffer module {unit_id} temperature PF2",
-                reg.address + 1,
-            ),
-            "buffer_pf2",
-        ),
+        (top, "buffer_top"),
+        (bottom, "buffer_bottom"),
         (
             _buffer_module_register(
                 f"buffer_module_setpoint_{unit_id}",
                 f"Buffer module {unit_id} setpoint",
-                reg.address - 1,
+                top.address - 1,
             ),
             "buffer_setpoint",
         ),
     )
-    for unit_id, reg in BUFFER_MODULE_TEMP_REGISTERS.items()
+    for unit_id, (top, bottom) in BUFFER_MODULE_TEMP_REGISTERS.items()
 }
 # Options storage key for whether any buffer module was found, read when the
 # integration starts (if not stored yet) and whenever the experimental
-# functions are opened; buffer_module_key() for each module.
+# functions are opened; buffer_module_key() for each module and
+# buffer_sensor_found_key() for each of its buffer sensors.
 CONF_BUFFER_MODULE = "buffer_module"
+# With both modules, the heat pump has a separate heating and cooling buffer
+# (Hoval): the heating buffer in module 143, the cooling buffer in 142. Their
+# entities are named after it, see buffer_module_translation().
+BUFFER_MODULE_ROLES: dict[int, str] = {142: "cooling_buffer", 143: "heating_buffer"}
 
 
 def buffer_module_key(unit_id: int) -> str:
     """Options storage key for whether the buffer module was found."""
     return f"buffer_module_{unit_id}"
+
+
+def buffer_sensor_found_key(reg: RegisterDef) -> str:
+    """Options storage key for whether a buffer module's buffer sensor shows
+    a plausible value; the sensor entity is only enabled then."""
+    return f"{reg.key}_found"
 
 
 def found_buffer_modules(options: Mapping[str, Any]) -> list[int]:
@@ -1311,11 +1327,11 @@ def found_buffer_modules(options: Mapping[str, Any]) -> list[int]:
 def buffer_module_translation(
     options: Mapping[str, Any], unit_id: int, translation_key: str
 ) -> tuple[str, dict[str, str]]:
-    """Translation key and placeholders of a buffer module's entity: the
-    module's UnitId is part of the name only if more than one module was
-    found."""
+    """Translation key and placeholders of a buffer module's entity, e.g.
+    "buffer_top". With both modules found, "buffer" becomes the module's role
+    from BUFFER_MODULE_ROLES, e.g. "heating_buffer_top"."""
     if len(found_buffer_modules(options)) > 1:
-        return f"{translation_key}_module", {"module": str(unit_id)}
+        return translation_key.replace("buffer", BUFFER_MODULE_ROLES[unit_id], 1), {}
     return translation_key, {}
 
 

@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     BUFFER_MODULE_SENSOR_REGISTERS,
+    BUFFER_MODULE_TEMP_REGISTERS,
     BUFFER_SENSOR_REGISTER,
     CONF_BUFFER_SENSOR,
     CIRCUIT_SENSOR_KEYS,
@@ -41,6 +42,7 @@ from .const import (
     SMART_GRID_STATUS_REGISTER,
     SMART_GRID_STATUS_UNKNOWN,
     buffer_module_translation,
+    buffer_sensor_found_key,
     found_buffer_modules,
     cooling_enabled,
     present_circuits,
@@ -83,12 +85,17 @@ async def async_setup_entry(
         for reg in SENSOR_REGISTERS
         if reg.key not in absent
     ]
+    # All sensors of a found module; a buffer sensor without a plausible
+    # value is offered disabled, so it can still be enabled.
     entities.extend(
         HovalSensor(
             coordinator,
             entry,
             reg,
-            enabled=True,
+            enabled=(
+                reg not in BUFFER_MODULE_TEMP_REGISTERS[unit_id]
+                or bool(entry.options.get(buffer_sensor_found_key(reg)))
+            ),
             translation=buffer_module_translation(entry.options, unit_id, key),
         )
         for unit_id in found_buffer_modules(entry.options)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -43,6 +44,8 @@ from .const import (
     RegisterDef,
     buffer_module_key,
     buffer_module_temp_plausible,
+    buffer_sensor_found_key,
+    found_buffer_modules,
     constant_control_enabled,
     cooling_enabled,
     constant_control_key,
@@ -116,8 +119,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
     if CONF_BUFFER_SENSOR not in entry.options or any(
-        buffer_module_key(unit_id) not in entry.options
-        for unit_id in BUFFER_MODULE_TEMP_REGISTERS
+        buffer_sensor_found_key(reg) not in entry.options
+        for regs in BUFFER_MODULE_TEMP_REGISTERS.values()
+        for reg in regs
     ):
         try:
             circuit_options.update(await async_read_buffers(coordinator))
@@ -147,7 +151,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinator.constant_controls[hc.key] = constant
 
     if cooling_enabled(entry.options):
-        _enable_cooling_sensors(hass, entry)
+        _enable_sensors(hass, entry, COOLING_SENSOR_KEYS)
+    # A buffer sensor offered without a value before, once it shows one.
+    _enable_sensors(
+        hass,
+        entry,
+        [
+            reg.key
+            for unit_id in found_buffer_modules(entry.options)
+            for reg in BUFFER_MODULE_TEMP_REGISTERS[unit_id]
+            if entry.options.get(buffer_sensor_found_key(reg))
+        ],
+    )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _remove_stale_entities(hass, coordinator, entry)
     # The first refresh only read the registers of the entities enabled by
@@ -193,11 +208,14 @@ async def async_read_circuit_options(
     return options
 
 
-def _enable_cooling_sensors(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Enables the cooling sensors once cooling is turned on, unless the
-    user disabled them; created before, they keep being disabled otherwise."""
+def _enable_sensors(
+    hass: HomeAssistant, entry: ConfigEntry, keys: Iterable[str]
+) -> None:
+    """Enables sensors the integration created disabled, e.g. the cooling
+    sensors once cooling is turned on, unless the user disabled them;
+    created before, they keep being disabled otherwise."""
     registry = er.async_get(hass)
-    for key in COOLING_SENSOR_KEYS:
+    for key in keys:
         entity_id = registry.async_get_entity_id(
             Platform.SENSOR, DOMAIN, f"{entry.entry_id}_{key}"
         )
@@ -270,11 +288,23 @@ async def async_read_buffers(coordinator: HovalModbusCoordinator) -> dict[str, b
     buffer sensor (WPF), as options to store. A register the controller
     doesn't answer for counts as missing. Raises UpdateFailed."""
     options: dict[str, bool] = {}
-    for unit_id, reg in BUFFER_MODULE_TEMP_REGISTERS.items():
-        options[buffer_module_key(unit_id)] = buffer_module_temp_plausible(
-            await coordinator.async_read_value_if_present(reg, unanswered_absent=True)
+    for unit_id, regs in BUFFER_MODULE_TEMP_REGISTERS.items():
+        found = [
+            buffer_module_temp_plausible(
+                await coordinator.async_read_value_if_present(
+                    reg, unanswered_absent=True
+                )
+            )
+            for reg in regs
+        ]
+        options.update(
+            (buffer_sensor_found_key(reg), sensor_found)
+            for reg, sensor_found in zip(regs, found)
         )
-    options[CONF_BUFFER_MODULE] = any(options.values())
+        options[buffer_module_key(unit_id)] = any(found)
+    options[CONF_BUFFER_MODULE] = any(
+        options[buffer_module_key(unit_id)] for unit_id in BUFFER_MODULE_TEMP_REGISTERS
+    )
     options[CONF_BUFFER_SENSOR] = bool(
         await coordinator.async_read_value_if_present(
             BUFFER_SENSOR_REGISTER, unanswered_absent=True

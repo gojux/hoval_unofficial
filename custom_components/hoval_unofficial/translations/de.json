@@ -249,11 +249,17 @@
       "constant_cooling_flow": {
         "name": "Vorlauf-Soll Konstant Kühlen Heizkreis {circuit}"
       },
-      "smart_grid_offset_buffer_heating_module": {
-        "name": "Smart Grid Offset Puffermodul {module} Heizen"
+      "smart_grid_offset_heating_buffer_heating": {
+        "name": "Smart Grid Offset Heizpuffer Heizen"
       },
-      "smart_grid_offset_buffer_cooling_module": {
-        "name": "Smart Grid Offset Puffermodul {module} Kühlen"
+      "smart_grid_offset_heating_buffer_cooling": {
+        "name": "Smart Grid Offset Heizpuffer Kühlen"
+      },
+      "smart_grid_offset_cooling_buffer_heating": {
+        "name": "Smart Grid Offset Kühlpuffer Heizen"
+      },
+      "smart_grid_offset_cooling_buffer_cooling": {
+        "name": "Smart Grid Offset Kühlpuffer Kühlen"
       }
     },
     "sensor": {
@@ -448,6 +454,9 @@
       "cop": {
         "name": "Leistungszahl (COP)"
       },
+      "seasonal_performance_factor": {
+        "name": "Jahresarbeitszahl (JAZ)"
+      },
       "operating_hours_heat_generator": {
         "name": "Betriebsstunden Wärmeerzeuger"
       },
@@ -469,23 +478,32 @@
       "mixing_valve_hc3": {
         "name": "Mischer Heizkreis 3"
       },
-      "buffer_pf": {
-        "name": "Puffertemperatur PF"
+      "buffer_top": {
+        "name": "Puffertemperatur oben"
       },
-      "buffer_pf_module": {
-        "name": "Puffertemperatur PF Puffermodul {module}"
-      },
-      "buffer_pf2": {
-        "name": "Puffertemperatur PF2"
-      },
-      "buffer_pf2_module": {
-        "name": "Puffertemperatur PF2 Puffermodul {module}"
+      "buffer_bottom": {
+        "name": "Puffertemperatur unten"
       },
       "buffer_setpoint": {
         "name": "Puffer-Soll"
       },
-      "buffer_setpoint_module": {
-        "name": "Puffer-Soll Puffermodul {module}"
+      "heating_buffer_top": {
+        "name": "Heizpuffertemperatur oben"
+      },
+      "heating_buffer_bottom": {
+        "name": "Heizpuffertemperatur unten"
+      },
+      "heating_buffer_setpoint": {
+        "name": "Heizpuffer-Soll"
+      },
+      "cooling_buffer_top": {
+        "name": "Kühlpuffertemperatur oben"
+      },
+      "cooling_buffer_bottom": {
+        "name": "Kühlpuffertemperatur unten"
+      },
+      "cooling_buffer_setpoint": {
+        "name": "Kühlpuffer-Soll"
       }
     },
     "switch": {

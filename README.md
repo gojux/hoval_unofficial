@@ -72,7 +72,8 @@ entry's three-dot menu → **Reconfigure**.
 ## What you get
 
 - **Sensors** — outdoor temperature, flow/return temperatures, heat
-  quantities, operating hours, COP, and a translated status sensor
+  quantities, operating hours, COP, seasonal performance factor (SPF), and
+  a translated status sensor
   (shows the controller's current status as readable text in your HA
   language, e.g. "Heating mode" / "Defrost" / "Frost protection").
   The controller's error code is shown as text too ("No error" or the
@@ -85,10 +86,14 @@ entry's three-dot menu → **Reconfigure**.
   e.g. whether a heating circuit pumps more water than the heat pump.
   Buffer temperatures: **Buffer temperature WPF** for the heat pump's own
   buffer sensor, and for a buffer module (PS, UnitId 142 or 143) its two
-  buffer sensors **Buffer temperature PF / PF2** and its **Buffer
+  buffer sensors **Buffer temperature top / bottom** and its **Buffer
   setpoint**. Each only if the integration finds it: when it is set up and
-  whenever the experimental functions are opened. With both buffer modules,
-  their names include the module's UnitId.
+  whenever the experimental functions are opened. A buffer sensor of a
+  found module that shows no value (e.g. a heating buffer with only the top
+  sensor) is created disabled, so you can still enable it. With both buffer
+  modules, the heat pump has a separate heating buffer (143) and cooling
+  buffer (142), and the entities are named **Heating buffer …** and
+  **Cooling buffer …**.
 - **Domestic hot water (DHW)** — a `water_heater` entity showing tank
   temperature, target temperature, and operating mode.
 - **Room heating circuits (HC1/HC2/HC3)** — `climate` entities for up to
@@ -442,7 +447,8 @@ effect:
 - cooling of heating circuit 1–3: only while the circuit runs on control
   strategy 3, 4 or 5;
 - buffer heating / cooling: per buffer module (PS, UnitId 142 or 143), only
-  while that module is found. Set **Smart Grid control** back to **Normal
+  while that module is found; with a separate heating and cooling buffer,
+  for both. Set **Smart Grid control** back to **Normal
 operation** to return to normal operation.
 
 Whether Smart Grid needs to be pre-configured by your installer or Hoval's

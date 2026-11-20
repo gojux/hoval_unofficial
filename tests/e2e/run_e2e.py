@@ -45,14 +45,16 @@ FLOW_SETPOINT_RAISE_HC1 = 30684
 FLOW_SETPOINT_RAISE_HC2 = 30685
 COOLING_FLOW_SETPOINT_HC3 = 23756
 FLOW_MAX_HC1 = 30690
-# Buffer temperature of buffer module PS UnitId 142.
+# Buffer sensor at the top of buffer module PS UnitId 142.
 BUFFER_MODULE_TEMP = 17324
-# Second buffer sensor and buffer setpoint of the same module.
+# Buffer sensor at the bottom and buffer setpoint of the same module.
 BUFFER_MODULE_TEMP2 = 17325
 BUFFER_MODULE_SETPOINT = 17323
-# Buffer sensor PF of buffer module PS UnitId 143.
+# Buffer sensor at the top of buffer module PS UnitId 143.
 BUFFER_MODULE_143_TEMP = 17386
-BUFFER_MODULE_SENSOR = "_buffer_temperature_pf"
+# Suffixes that don't match the heating buffer's entities too.
+BUFFER_MODULE_SENSOR = "_pump_buffer_temperature_top"
+BUFFER_MODULE_SENSOR_BOTTOM = "_pump_buffer_temperature_bottom"
 # Low word of the buffer sensor (WPF, 27493/27494).
 BUFFER_SENSOR = 27494
 # The simulator leaves reads of the range between these unanswered.
@@ -861,27 +863,46 @@ def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
     wait_until_polling(token)
     print("OK: the raise is not offered with a buffer module")
     wait_for_attribute(token, BUFFER_MODULE_SENSOR, lambda s: s["state"] == "45.2")
-    wait_for_attribute(token, "_buffer_temperature_pf2", lambda s: s["state"] == "30.1")
-    wait_for_attribute(token, "_buffer_setpoint", lambda s: s["state"] == "50.0")
+    wait_for_attribute(token, BUFFER_MODULE_SENSOR_BOTTOM, lambda s: s["state"] == "30.1")
+    wait_for_attribute(token, "_pump_buffer_setpoint", lambda s: s["state"] == "50.0")
     name = entity_state(token, BUFFER_MODULE_SENSOR)["attributes"].get("friendly_name", "")
-    if "module" in name:
-        raise SystemExit(f"A single buffer module is named with its number: {name}")
+    if not name.endswith("Buffer temperature top"):
+        raise SystemExit(f"A single buffer module isn't named plainly: {name}")
     print("OK: the buffer module's temperatures and setpoint are shown")
 
-    # With both modules, their names include the module.
+    # Separate heating buffer (module 143, top sensor only) and cooling buffer
+    # (module 142, bottom sensor only).
+    write_sim(BUFFER_MODULE_TEMP, 0)
     write_sim(BUFFER_MODULE_143_TEMP, 389)
     # Saving the experimental functions detects the modules again.
     submit_form(token, open_options_step(token, entry_id, "experimental"), {})
-    state = wait_for_attribute(
-        token, "_buffer_temperature_pf_buffer_module_143", lambda s: s["state"] == "38.9"
+    wait_for_attribute(
+        token, "_heating_buffer_temperature_top", lambda s: s["state"] == "38.9"
     )
-    name = entity_state(token, BUFFER_MODULE_SENSOR)["attributes"].get("friendly_name", "")
-    if not name.endswith("buffer module 142"):
-        raise SystemExit(f"With two buffer modules, the first isn't named with its number: {name}")
-    print("OK: with two buffer modules, their names include the module")
+    name = entity_state(token, BUFFER_MODULE_SENSOR_BOTTOM)["attributes"].get(
+        "friendly_name", ""
+    )
+    if not name.endswith("Cooling buffer temperature bottom"):
+        raise SystemExit(f"Module 142 isn't named as the cooling buffer: {name}")
+    states = request("GET", "/api/states", token=token)
+    if any(s["entity_id"].endswith("_heating_buffer_temperature_bottom") for s in states):
+        raise SystemExit("A buffer sensor without a value is enabled")
+    options = request(
+        "GET", f"/api/diagnostics/config_entry/{entry_id}", token=token
+    )["data"]["config_entry"]["options"]
+    expected = {
+        "buffer_module_142": True,
+        "buffer_module_temp_142_found": False,
+        "buffer_module_temp2_142_found": True,
+        "buffer_module_143": True,
+        "buffer_module_temp2_143_found": False,
+    }
+    if any(options.get(key) != value for key, value in expected.items()):
+        raise SystemExit(f"Buffer sensors detected wrongly: {options}")
+    print("OK: separate heating and cooling buffers are found and named")
     write_sim(BUFFER_MODULE_143_TEMP, 0)
 
-    write_sim(BUFFER_MODULE_TEMP, 0)
+    write_sim(BUFFER_MODULE_TEMP2, 0)
     set_experimental(token, entry_id, flow_setpoint_raise=True)
     # Kept like other enabled entities that are no longer provided.
     wait_for_attribute(token, BUFFER_MODULE_SENSOR, lambda s: s["state"] == "unavailable")

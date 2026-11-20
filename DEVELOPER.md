@@ -80,9 +80,11 @@ integration. For installation and usage as an end user, see
   their verification status are listed in [REGISTERS.md](REGISTERS.md)
 - `sensor.py` – creates HA sensors from `SENSOR_REGISTERS` (the buffer
   sensor `buffer_temp` only with `CONF_BUFFER_SENSOR`) and the sensors of
-  each found buffer module (`BUFFER_MODULE_SENSOR_REGISTERS`, named by
-  `buffer_module_translation`: with the UnitId only if both modules are
-  found, as the buffer Smart Grid offsets in `number.py`), plus
+  each found buffer module (`BUFFER_MODULE_SENSOR_REGISTERS`; a buffer
+  sensor without a plausible value, `buffer_sensor_found_key`, disabled;
+  named by `buffer_module_translation`: as heating / cooling buffer from
+  `BUFFER_MODULE_ROLES` only if both modules are found, as the buffer Smart
+  Grid offsets in `number.py`), plus
   dedicated enum sensors (device_class `enum`) that translate raw codes
   into localized texts (English/German): `HovalStatusSensor` (status),
   `HovalControllerErrorSensor` (error code, 255 = no error), the Smart
