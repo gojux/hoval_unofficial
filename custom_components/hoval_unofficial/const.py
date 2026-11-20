@@ -752,6 +752,18 @@ HEATING_CIRCUIT_STATUS_OPTIONS: list[str] = [
     *HEATING_CIRCUIT_STATUS_MAP.values(),
     HEATING_CIRCUIT_STATUS_UNKNOWN,
 ]
+# Statuses in which the circuit is in cooling or in heating operation, e.g.
+# for the climate entity's action. Others (off, frost protection, holiday,
+# fault, manual) are neither.
+HEATING_CIRCUIT_STATUS_COOLING = frozenset({9, 10, 11, 14, 15, 22, 25, 27})
+HEATING_CIRCUIT_STATUS_HEATING = frozenset(
+    {1, 2, 3, 5, 6, 8, 16, 17, 18, 19, 23, 24, 26}
+)
+
+
+def circuit_cooling(status: float | None) -> bool:
+    """Whether a heating circuit status shows cooling operation."""
+    return status is not None and int(status) in HEATING_CIRCUIT_STATUS_COOLING
 
 
 @dataclass
@@ -791,6 +803,31 @@ class HeatingCircuit:
     heating_constant_flow_reg: RegisterDef
     # Highest flow temperature of the circuit, set by the installer.
     flow_max_reg: RegisterDef
+    # Room setpoints while the circuit cools weather compensated (strategy
+    # 0/1/2): the controller switches between heating and cooling by the
+    # outdoor temperature and then uses these instead of the heating ones.
+    # Gateway software 2.39 and later.
+    write_normal_cooling_setpoint_reg: RegisterDef
+    write_eco_cooling_setpoint_reg: RegisterDef
+
+
+def _room_cooling_setpoint_reg(
+    circuit: int, eco: bool, address: int
+) -> RegisterDef:
+    kind = "eco" if eco else "normal"
+    return RegisterDef(
+        key=f"write_{kind}_cooling_setpoint_hc{circuit}",
+        name=f"{kind.capitalize()} cooling setpoint HC{circuit}",
+        address=address,
+        data_type="int16",
+        scale=0.1,
+        step=0.5,
+        min_value=20 if eco else 10,
+        max_value=35 if eco else 30,
+        # Read by the climate entity of a circuit that can cool weather
+        # compensated, not by the first refresh.
+        enabled_default=False,
+    )
 
 
 HEATING_CIRCUIT_1 = HeatingCircuit(
@@ -864,6 +901,8 @@ HEATING_CIRCUIT_1 = HeatingCircuit(
         address=30690,
         scale=0.1,
     ),
+    write_normal_cooling_setpoint_reg=_room_cooling_setpoint_reg(1, False, 31796),
+    write_eco_cooling_setpoint_reg=_room_cooling_setpoint_reg(1, True, 31799),
 )
 HEATING_CIRCUIT_2 = HeatingCircuit(
     key="heating_circuit_2",
@@ -936,6 +975,8 @@ HEATING_CIRCUIT_2 = HeatingCircuit(
         address=30691,
         scale=0.1,
     ),
+    write_normal_cooling_setpoint_reg=_room_cooling_setpoint_reg(2, False, 31797),
+    write_eco_cooling_setpoint_reg=_room_cooling_setpoint_reg(2, True, 31800),
 )
 HEATING_CIRCUIT_3 = HeatingCircuit(
     key="heating_circuit_3",
@@ -1008,6 +1049,8 @@ HEATING_CIRCUIT_3 = HeatingCircuit(
         address=30692,
         scale=0.1,
     ),
+    write_normal_cooling_setpoint_reg=_room_cooling_setpoint_reg(3, False, 31798),
+    write_eco_cooling_setpoint_reg=_room_cooling_setpoint_reg(3, True, 31801),
 )
 
 HEATING_CIRCUITS = [HEATING_CIRCUIT_1, HEATING_CIRCUIT_2, HEATING_CIRCUIT_3]
@@ -1037,6 +1080,8 @@ HEATING_CIRCUIT_REGISTERS = [
         hc.read_setpoint_reg,
         hc.write_normal_setpoint_reg,
         hc.write_eco_setpoint_reg,
+        hc.write_normal_cooling_setpoint_reg,
+        hc.write_eco_cooling_setpoint_reg,
     )
 ] + [
     reg
@@ -1184,8 +1229,11 @@ def room_influence_enabled(options: Mapping[str, Any]) -> bool:
 # since none of its controls would have an effect.
 CONF_EXPERIMENTAL_CONSTANT_CONTROL = "experimental_constant_control"
 # Cooling: the Cool mode and cooling flow setpoint of circuits on strategy 4
-# or 5, and cooling with constant control. Without it, strategies 4 and 5 are
-# handled like 0 and 1 and the cooling flow setpoints are never written.
+# or 5, cooling with constant control, and writing the cooling room
+# setpoints of circuits cooling weather compensated (strategy 0/1/2). Without
+# it, the Cool mode of strategies 4 and 5 is only shown while the circuit
+# already cools (and can be left, not chosen), and cooling setpoints are only
+# shown, never written.
 CONF_EXPERIMENTAL_COOLING = "experimental_cooling"
 CONTROL_STRATEGY_CONSTANT = 3
 CONSTANT_HEATING_MIN = 20.0
@@ -1220,6 +1268,15 @@ COOLING_SENSOR_KEYS: tuple[str, ...] = ("current_cooling_power", "cooling_energy
 def cooling_enabled(options: Mapping[str, Any]) -> bool:
     """Whether cooling is turned on (experimental function)."""
     return bool(options.get(CONF_EXPERIMENTAL_COOLING))
+
+
+def weather_cooling_possible(options: Mapping[str, Any], hc: HeatingCircuit) -> bool:
+    """Whether the circuit can cool weather compensated: at strategies 0, 1
+    and 2 the controller switches to cooling by the outdoor temperature if
+    the installer set it up, which no register tells. Strategies 4 and 5 cool
+    with a constant flow setpoint instead."""
+    strategy = options.get(control_strategy_key(hc))
+    return strategy not in CONTROL_STRATEGIES_COOLING and strategy != CONTROL_STRATEGY_CONSTANT
 
 
 def constant_heating_range(
@@ -1712,9 +1769,9 @@ NUMBER_REGISTERS.extend(
     ]
 )
 
-# Smart Grid offsets only offered where they can have an effect: each buffer
-# module's while it is found, each circuit's cooling offset at a strategy
-# with cooling or constant control.
+# Smart Grid offsets: each buffer module's only while it is found; each
+# present circuit's cooling offset at any strategy, since 0/1/2 can cool
+# weather compensated too.
 SMART_GRID_BUFFER_OFFSET_REGISTERS: dict[int, tuple[tuple[RegisterDef, str], ...]] = {
     142: (
         (SMART_GRID_OFFSET_BUFFER_142_HEATING_REGISTER, "smart_grid_offset_buffer_heating"),
@@ -1730,7 +1787,6 @@ SMART_GRID_COOLING_OFFSET_REGISTERS: dict[str, RegisterDef] = {
     HEATING_CIRCUIT_2.key: SMART_GRID_OFFSET_COOLING_HC2_REGISTER,
     HEATING_CIRCUIT_3.key: SMART_GRID_OFFSET_COOLING_HC3_REGISTER,
 }
-SMART_GRID_COOLING_OFFSET_STRATEGIES: tuple[int, ...] = (3, 4, 5)
 SMART_GRID_HEATING_OFFSET_REGISTERS: dict[str, RegisterDef] = {
     HEATING_CIRCUIT_1.key: SMART_GRID_OFFSET_HC1_REGISTER,
     HEATING_CIRCUIT_2.key: SMART_GRID_OFFSET_HC2_REGISTER,

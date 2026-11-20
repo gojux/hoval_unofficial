@@ -22,6 +22,9 @@ from .const import (
     HEAT_PUMP_STATUS_REGISTER,
     HEATING_CIRCUIT_1,
     HEATING_CIRCUITS,
+    HeatingCircuit,
+    RegisterDef,
+    circuit_cooling,
     circuit_present,
     flow_setpoint_raise_bounds,
     flow_setpoint_raise_offered,
@@ -167,6 +170,129 @@ class FlowSetpointRaiseControl:
 
     def attributes(self) -> dict[str, object]:
         return {"minimum": self.lower, "maximum": self.upper}
+
+
+class CoolingRaiseGuard:
+    """Puts the installer's raise back while a circuit cools.
+
+    The raise register acts as a reduction while cooling, so a raise set by
+    the integration would make the flow colder (condensation). Circuits on
+    strategy 0/1 can cool weather compensated: the controller switches by the
+    outdoor temperature, seen here in the circuit's status on the next poll.
+    Then the raise remembered when the integration took it over
+    (flow_setpoint_raise_previous_key) is written back, the automatic
+    adjustment paused and the number entity refuses changes; once the circuit
+    heats again, the raise from before cooling is written back.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        coordinator: HovalModbusCoordinator,
+        entry: ConfigEntry,
+        control: FlowSetpointRaiseControl | None,
+    ) -> None:
+        self._hass = hass
+        self._coordinator = coordinator
+        self._entry = entry
+        self._control = control
+        self._circuits = [
+            (hc, reg)
+            for hc, reg in zip(HEATING_CIRCUITS, FLOW_SETPOINT_RAISE_REGISTERS)
+            if flow_setpoint_raise_offered(entry.options, hc)
+        ]
+        # Keys of the circuits in cooling operation.
+        self._cooling: set[str] = set()
+        # Raise of each circuit before it started cooling.
+        self._heating_raises: dict[str, float] = {}
+        self._busy: set[str] = set()
+        self._remove_listener: CALLBACK_TYPE | None = None
+
+    @callback
+    def async_start(self) -> None:
+        context = [
+            key for hc, reg in self._circuits for key in (hc.status_reg.key, reg.key)
+        ]
+        self._remove_listener = self._coordinator.async_add_listener(
+            self._handle_update, context=context
+        )
+
+    @callback
+    def async_stop(self) -> None:
+        if self._remove_listener is not None:
+            self._remove_listener()
+            self._remove_listener = None
+
+    def cooling(self, hc: HeatingCircuit) -> bool:
+        """Whether the circuit's raise is held at the installer's value."""
+        return hc.key in self._cooling
+
+    def _installer_raise(self, hc: HeatingCircuit) -> float:
+        # 0 if it couldn't be remembered: no reduction at all.
+        return self._entry.options.get(flow_setpoint_raise_previous_key(hc), 0.0)
+
+    @callback
+    def _handle_update(self) -> None:
+        if not self._coordinator.last_update_success:
+            return
+        data = self._coordinator.data or {}
+        for hc, reg in self._circuits:
+            status = data.get(hc.status_reg.key)
+            if status is None or hc.key in self._busy:
+                continue
+            cooling = circuit_cooling(status)
+            current = data.get(reg.key)
+            if cooling and hc.key not in self._cooling:
+                self._cooling.add(hc.key)
+                if current is not None:
+                    self._heating_raises[hc.key] = current
+                self._run(hc, self._async_hold(hc, reg, pause=True))
+            elif (
+                cooling
+                and current is not None
+                and abs(current - self._installer_raise(hc)) >= reg.scale / 2
+            ):
+                # Changed while cooling, e.g. at the controller.
+                self._run(hc, self._async_hold(hc, reg, pause=False))
+            elif not cooling and hc.key in self._cooling:
+                self._cooling.discard(hc.key)
+                self._run(hc, self._async_release(hc, reg))
+
+    def _run(self, hc: HeatingCircuit, coro) -> None:
+        self._busy.add(hc.key)
+
+        async def run() -> None:
+            try:
+                await coro
+            except UpdateFailed as err:
+                _LOGGER.warning(
+                    "Could not set the flow setpoint raise of %s: %s", hc.key, err
+                )
+            finally:
+                self._busy.discard(hc.key)
+
+        self._entry.async_create_background_task(
+            self._hass, run(), f"flow setpoint raise while cooling {hc.key}"
+        )
+
+    async def _async_hold(
+        self, hc: HeatingCircuit, reg: RegisterDef, pause: bool
+    ) -> None:
+        if pause and hc is HEATING_CIRCUIT_1 and self._control is not None:
+            await self._control.async_pause()
+        value = self._installer_raise(hc)
+        _LOGGER.info(
+            "%s cools: flow setpoint raise set back to %s K", hc.key, value
+        )
+        await self._coordinator.async_write_value(reg, value, refresh=False)
+
+    async def _async_release(self, hc: HeatingCircuit, reg: RegisterDef) -> None:
+        value = self._heating_raises.pop(hc.key, None)
+        if value is not None:
+            _LOGGER.info("%s heats again: flow setpoint raise %s K", hc.key, value)
+            await self._coordinator.async_write_value(reg, value, refresh=False)
+        if hc is HEATING_CIRCUIT_1 and self._control is not None:
+            self._control.resume()
 
 
 

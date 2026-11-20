@@ -33,14 +33,12 @@ from .const import (
     cooling_flow_range,
     SMART_GRID_BUFFER_OFFSET_REGISTERS,
     SMART_GRID_COOLING_OFFSET_REGISTERS,
-    SMART_GRID_COOLING_OFFSET_STRATEGIES,
     SMART_GRID_HEATING_OFFSET_REGISTERS,
     SMART_GRID_OFFSET_DHW_REGISTER,
     dhw_present,
     present_circuits,
     buffer_module_translation,
     found_buffer_modules,
-    control_strategy_key,
     cooling_supported_key,
     flow_setpoint_raise_bounds,
     flow_setpoint_raise_offered,
@@ -97,7 +95,6 @@ async def async_setup_entry(
     entities.extend(
         HovalNumber(coordinator, entry, SMART_GRID_COOLING_OFFSET_REGISTERS[hc.key])
         for hc in circuits
-        if options.get(control_strategy_key(hc)) in SMART_GRID_COOLING_OFFSET_STRATEGIES
     )
     # The raise is an experimental function, offered per circuit, within the
     # circuit's bounds; enabled like the circuit's other entities.
@@ -108,6 +105,7 @@ async def async_setup_entry(
             reg,
             enabled=True,
             bounds=flow_setpoint_raise_bounds(options, hc),
+            raise_circuit=hc,
         )
         for hc, reg in zip(HEATING_CIRCUITS, FLOW_SETPOINT_RAISE_REGISTERS)
         if flow_setpoint_raise_offered(options, hc)
@@ -147,9 +145,13 @@ class HovalNumber(CoordinatorEntity[HovalModbusCoordinator], NumberEntity):
         enabled: bool | None = None,
         bounds: tuple[float, float] | None = None,
         translation: tuple[str, dict[str, str]] | None = None,
+        raise_circuit: HeatingCircuit | None = None,
     ) -> None:
         super().__init__(coordinator, context=[reg.key])
         self._reg = reg
+        # The circuit of a flow setpoint raise, held while it cools (see
+        # CoolingRaiseGuard).
+        self._raise_circuit = raise_circuit
         self._pending: float | None = None
         self._pending_since: datetime | None = None
         # Half a step of the register: values closer than this are the same
@@ -218,6 +220,16 @@ class HovalNumber(CoordinatorEntity[HovalModbusCoordinator], NumberEntity):
             self._pending_since = None
 
     async def async_set_native_value(self, value: float) -> None:
+        guard = self.coordinator.raise_guard
+        if (
+            self._raise_circuit is not None
+            and guard is not None
+            and guard.cooling(self._raise_circuit)
+        ):
+            raise ServiceValidationError(
+                f"{self._raise_circuit.key} cools: its flow setpoint raise stays "
+                "at the installer's value until it heats again."
+            )
         self._pending = value
         self._pending_since = dt_util.utcnow()
         self.async_write_ha_state()

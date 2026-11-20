@@ -117,12 +117,19 @@ integration. For installation and usage as an end user, see
   adjustment, and refuses to save if it fails; `async_setup_entry` runs it
   too, e.g. for a strategy read at startup. `async_cleanup_removed_entry`
   writes back all remembered raises on removal (only logging a failure);
-  cooling and constant control are left as they are
+  cooling and constant control are left as they are.
+  `CoolingRaiseGuard`, created while any circuit's raise is offered
+  (`coordinator.raise_guard`), listens to the circuits' status and raise
+  registers: once a status shows cooling (`circuit_cooling`), it writes the
+  remembered raise (`flow_setpoint_raise_previous_key`, 0 without one) and
+  keeps it there, pausing heating circuit 1's automatic adjustment; the
+  raise number refuses changes meanwhile. Once the circuit heats again, the
+  raise from before cooling is written back and the adjustment resumed
 - `number.py` – creates writable HA entities from `NUMBER_REGISTERS`; some
   only under conditions: the flow setpoint raises (`flow_setpoint_raise_offered`,
   range from `flow_setpoint_raise_bounds`), the buffer Smart Grid offsets per
-  found buffer module (`buffer_module_key`), the cooling Smart Grid offsets
-  at strategy 3/4/5 (`control_strategy_key`). A
+  found buffer module (`buffer_module_key`), the Smart Grid offsets per
+  present circuit (heating and cooling, any strategy). A
   written value is shown right away until the next poll confirms it
   (`change_pending` attribute, given up after 90 s)
 - `switch.py` – the switch for the automatic flow setpoint raise
@@ -211,9 +218,12 @@ must be the *only* source of the name.
 ## Cooling (per heating circuit)
 
 Cooling is an experimental function (`CONF_EXPERIMENTAL_COOLING`,
-`cooling_enabled`). Without it, `HovalRoomClimate` neither polls nor shows
-nor writes the cooling flow setpoint, and no cooling number is created, so
-strategies 4/5 behave like 0/1. Turning it off while a circuit's cooling flow
+`cooling_enabled`). Without it, nothing cooling-related is written or can be
+chosen, and no cooling number is created; cooling the controller does on its
+own is still shown: `HovalRoomClimate` polls the cooling flow setpoint at
+strategy 4/5 and shows `HVACMode.COOL` while it is above 0 (leaving it writes
+0, as usual), and shows the cooling room setpoints of weather-compensated
+cooling read-only (see below). Turning it off while a circuit's cooling flow
 setpoint is above 0 goes through `async_step_confirm_cooling_off`, which
 writes 0, reads it back and only then saves the options.
 
@@ -239,6 +249,20 @@ mode writes the cooling flow setpoint 0 first and then the mode register. Heatin
 compensated with these strategies and doesn't use that register (only
 strategy 3 does, see `constant_control.py`), so it isn't restored when cooling
 stops.
+
+Weather-compensated cooling (strategy 0/1/2, `weather_cooling_possible`): the
+controller switches between heating and cooling by the outdoor temperature
+and then uses the cooling room setpoints
+(`write_normal_cooling_setpoint_reg` / `write_eco_cooling_setpoint_reg`,
+gateway 2.39+, polled by the climate entity of such a circuit). No register
+tells whether an installation does this; `HovalRoomClimate` goes by the
+circuit's status (`status_reg`, `HEATING_CIRCUIT_STATUS_COOLING`), polled for
+`hvac_action`. While it shows cooling, the mode stays as it is, the target
+temperature is the cooling room setpoint of the mode (normal in Constant,
+eco with the eco preset, stored value without Smart Grid offset; the
+current room setpoint in the week programs or if the gateway hasn't got
+the register), and is only written with the experimental function, with the
+same optimistic update as heating.
 
 ## Heating circuits and hot water present
 

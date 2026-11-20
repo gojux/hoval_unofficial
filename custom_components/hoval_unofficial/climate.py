@@ -8,6 +8,7 @@ from typing import Any
 from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
+    HVACAction,
     HVACMode,
     PRESET_ECO,
 )
@@ -44,9 +45,11 @@ from .const import (
     CURRENT_TEMP_SOURCE_MODBUS,
     DEFAULT_CURRENT_TEMP_SOURCE,
     DOMAIN,
+    HEATING_CIRCUIT_STATUS_HEATING,
     HVAC_TO_CLIMATE_MODE,
     PRESET_TO_CLIMATE_MODE,
     RegisterDef,
+    circuit_cooling,
     cooling_flow_range,
     cooling_enabled,
     cooling_supported_key,
@@ -54,6 +57,7 @@ from .const import (
     present_circuits,
     current_temp_entity_key,
     current_temp_source_key,
+    weather_cooling_possible,
 )
 from .coordinator import HovalModbusCoordinator
 from .room_temp import has_room_sensor, parse_room_temperature
@@ -173,20 +177,39 @@ class HovalRoomClimate(
         # excluded (only written, never read for display). room_actual_temp_reg
         # is only included if this circuit's source is actually set to
         # "modbus", so switching to "none"/"entity" also stops polling it.
-        context = [heating_circuit.mode_reg.key, heating_circuit.read_setpoint_reg.key]
+        # The circuit's status tells the action (heating / cooling).
+        context = [
+            heating_circuit.mode_reg.key,
+            heating_circuit.read_setpoint_reg.key,
+            heating_circuit.status_reg.key,
+        ]
         if self._current_temp_source == CURRENT_TEMP_SOURCE_MODBUS:
             context.append(heating_circuit.room_actual_temp_reg.key)
-        # Without the experimental function, cooling is neither shown nor
-        # written, as if the strategy didn't include it.
+        # Without the experimental function, cooling is shown but neither
+        # chosen nor written: the Cool mode only while the circuit already
+        # cools (it can be left), the cooling room setpoints read-only.
         self._cooling_enabled = cooling_enabled(entry.options)
-        # Polled even without stored cooling support, so cooling turned on at
-        # the controller itself still shows.
-        if self._cooling_enabled:
+        # Cooling with the constant cooling flow setpoint (strategy 4/5).
+        # Polled with the experimental function even without stored cooling
+        # support, so cooling turned on at the controller itself still shows.
+        constant_cooling = bool(entry.options.get(cooling_supported_key(heating_circuit)))
+        self._constant_cooling_polled = self._cooling_enabled or constant_cooling
+        if self._constant_cooling_polled:
             context.append(heating_circuit.cooling_flow_setpoint_reg.key)
-        self._cooling_supported = bool(
-            self._cooling_enabled
-            and entry.options.get(cooling_supported_key(heating_circuit))
+        # Whether the Cool mode can be chosen.
+        self._cooling_supported = self._cooling_enabled and constant_cooling
+        # Cooling by the outdoor temperature with the cooling room setpoints
+        # (strategy 0/1/2).
+        self._weather_cooling_possible = weather_cooling_possible(
+            entry.options, heating_circuit
         )
+        if self._weather_cooling_possible:
+            context.extend(
+                (
+                    heating_circuit.write_normal_cooling_setpoint_reg.key,
+                    heating_circuit.write_eco_cooling_setpoint_reg.key,
+                )
+            )
         self._cooling_flow_range = cooling_flow_range(heating_circuit, entry.options)
 
         super().__init__(coordinator, context=context)
@@ -331,7 +354,7 @@ class HovalRoomClimate(
                 self._pending_mode_value = None
                 self._pending_mode_since = None
 
-        raw_setpoint = self.coordinator.data.get(self._hc.read_setpoint_reg.key)
+        raw_setpoint = self.coordinator.data.get(self._displayed_setpoint_reg().key)
         if (
             self._pending_temperature is not None
             and raw_setpoint is not None
@@ -353,9 +376,40 @@ class HovalRoomClimate(
         super()._handle_coordinator_update()
 
     def _raw_cooling_active(self) -> bool:
-        if not self._cooling_enabled:
+        """Whether the circuit cools with the constant cooling flow setpoint."""
+        if not self._constant_cooling_polled:
             return False
         return bool(self.coordinator.data.get(self._hc.cooling_flow_setpoint_reg.key))
+
+    def _weather_cooling_active(self) -> bool:
+        """Whether the circuit cools weather compensated (strategy 0/1/2), by
+        its status: the controller switched to cooling by the outdoor
+        temperature, and the cooling room setpoints apply."""
+        return (
+            self._weather_cooling_possible
+            and circuit_cooling(self.coordinator.data.get(self._hc.status_reg.key))
+            and not self._cooling_active()
+        )
+
+    def _cooling_setpoint_reg(self) -> RegisterDef | None:
+        """The cooling room setpoint that applies while cooling weather
+        compensated: normal in Constant, eco with the eco preset; None in the
+        week programs, which switch between them by schedule."""
+        if self.hvac_mode == HVACMode.HEAT:
+            return self._hc.write_normal_cooling_setpoint_reg
+        if self.hvac_mode == HVACMode.AUTO and self.preset_mode == PRESET_ECO:
+            return self._hc.write_eco_cooling_setpoint_reg
+        return None
+
+    def _displayed_setpoint_reg(self) -> RegisterDef:
+        """The register the target temperature is shown from: the current
+        room setpoint, or while cooling weather compensated the cooling room
+        setpoint of the mode, if the controller has it."""
+        if self._weather_cooling_active():
+            reg = self._cooling_setpoint_reg()
+            if reg is not None and self.coordinator.data.get(reg.key) is not None:
+                return reg
+        return self._hc.read_setpoint_reg
 
     def _expire_stale_pending_cooling(self) -> None:
         if (
@@ -473,7 +527,7 @@ class HovalRoomClimate(
         self._expire_stale_pending_temperature()
         if self._pending_temperature is not None:
             return self._pending_temperature
-        return self.coordinator.data.get(self._hc.read_setpoint_reg.key)
+        return self.coordinator.data.get(self._displayed_setpoint_reg().key)
 
     def _target_setpoint_register_for_current_mode(self) -> RegisterDef | None:
         """Which setpoint register to write applies to the current mode:
@@ -482,7 +536,11 @@ class HovalRoomClimate(
         active. None for Off and the Week1/Week2 schedule presets, which
         are schedule-driven on the controller and have no directly
         settable temperature -- callers must handle that (see
-        async_set_temperature())."""
+        async_set_temperature()). While cooling weather compensated, the
+        cooling room setpoint of the mode, only with the experimental
+        function (otherwise None: shown, not written)."""
+        if self._weather_cooling_active():
+            return self._cooling_setpoint_reg() if self._cooling_enabled else None
         if self.hvac_mode == HVACMode.HEAT:
             return self._hc.write_normal_setpoint_reg
         if self.hvac_mode == HVACMode.AUTO and self.preset_mode == PRESET_ECO:
@@ -565,8 +623,11 @@ class HovalRoomClimate(
 
     @property
     def hvac_modes(self) -> list[HVACMode]:
-        """Cooling is offered for circuits whose control strategy included
-        cooling when they were last saved, and always shown while active."""
+        """The Cool mode (constant cooling flow setpoint, strategy 4/5) is
+        offered with the experimental function for circuits whose control
+        strategy included it when they were last saved, and always shown
+        while active, so it can be left. Weather compensated cooling has no
+        mode of its own: it shows in hvac_action."""
         if self._cooling_supported or self._cooling_active():
             return [*self._attr_hvac_modes, HVACMode.COOL]
         return self._attr_hvac_modes
@@ -595,6 +656,25 @@ class HovalRoomClimate(
         if raw_mode is None:
             return None
         return CLIMATE_MODE_TO_HVAC.get(raw_mode)
+
+    @property
+    def hvac_action(self) -> HVACAction | None:
+        """Whether the circuit is in heating or cooling operation, by its
+        status -- not whether the heat pump runs right now."""
+        if self.hvac_mode == HVACMode.OFF:
+            return HVACAction.OFF
+        if self._cooling_active():
+            return HVACAction.COOLING
+        status = self.coordinator.data.get(self._hc.status_reg.key)
+        if status is None:
+            return None
+        if self._weather_cooling_possible and circuit_cooling(status):
+            return HVACAction.COOLING
+        if int(status) in HEATING_CIRCUIT_STATUS_HEATING:
+            return HVACAction.HEATING
+        if int(status) == 0:
+            return HVACAction.OFF
+        return HVACAction.IDLE
 
     @property
     def preset_modes(self) -> list[str] | None:
@@ -670,6 +750,13 @@ class HovalRoomClimate(
             return
 
         target_reg = self._target_setpoint_register_for_current_mode()
+        weather_cooling = self._weather_cooling_active()
+        if target_reg is None and weather_cooling and self._cooling_setpoint_reg():
+            raise ServiceValidationError(
+                f"{self._hc.key} cools by the outdoor temperature; its cooling "
+                "room setpoints are only written with the experimental function "
+                "\"Cooling\" turned on."
+            )
         if target_reg is None:
             _LOGGER.warning(
                 "%s: cannot set target temperature while in mode %r / "
@@ -690,9 +777,14 @@ class HovalRoomClimate(
             )
 
         # The controller adds an active Smart Grid offset on top of the base
-        # setpoint written here, and the setpoint it reports includes it.
-        offset = await self.coordinator.async_smart_grid_offset(
-            self._hc.smart_grid_offset_reg
+        # setpoint written here, and the setpoint it reports includes it. A
+        # cooling room setpoint is shown as it is stored, without the offset.
+        offset = (
+            0.0
+            if weather_cooling
+            else await self.coordinator.async_smart_grid_offset(
+                self._hc.smart_grid_offset_reg
+            )
         )
         base_setpoint = target_reg.clamp(temperature - offset)
         self._pending_temperature = base_setpoint + offset

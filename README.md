@@ -35,6 +35,10 @@ Home Assistant 2026.9 or newer. The integration uses Home Assistant's
 built-in Modbus connection, so no extra Python packages are needed and
 no Modbus YAML configuration is required.
 
+TopTronic E gateway (TTE-GW) software 2.39 or newer: only from this version
+on does the gateway provide the cooling room setpoints, see
+[Cooling](#cooling).
+
 ## Installation
 
 ### Via HACS
@@ -124,9 +128,9 @@ integration supports depends on it:
 
 | Value | Control strategy | Modes and room setpoints | Show a room temperature | Send a room temperature | Switch room influence on/off | Cooling |
 |---|---|---|---|---|---|---|
-| 0 | Weather-compensated | ✓ | ✓ | ✓³ (the controller ignores it) | ✓³ (switches to 1) | – |
-| 1 | Weather-compensated with room influence | ✓ | ✓ | ✓³ (corrects the flow temperature) | ✓³ (switches to 0) | – |
-| 2 | Room control only | ✓ | ✓ | – | – | – |
+| 0 | Weather-compensated | ✓ | ✓ | ✓³ (the controller ignores it) | ✓³ (switches to 1) | ✓⁴ |
+| 1 | Weather-compensated with room influence | ✓ | ✓ | ✓³ (corrects the flow temperature) | ✓³ (switches to 0) | ✓⁴ |
+| 2 | Room control only | ✓ | ✓ | – | – | ✓⁴ |
 | 3 | Constant control | –¹ | – | – | – | –¹ ² |
 | 4 | Weather-compensated heating + constant cooling | ✓ | ✓ | ✓³ (the controller ignores it) | ✓³ (switches to 5) | ✓² |
 | 5 | Weather-compensated heating with room influence + constant cooling | ✓ | ✓ | ✓³ (corrects the flow temperature) | ✓³ (switches to 4) | ✓² |
@@ -144,14 +148,19 @@ integration supports depends on it:
 - ¹ A circuit on strategy 3 has no climate entity, only its sensors. With
   the experimental function [constant control](#constant-control-strategy-3)
   it gets a select for heating / off / cooling and its flow setpoints.
-- ² Only with the experimental function **Cooling**; without it,
-  strategies 4 and 5 are handled like 0 and 1.
+- ² Only with the experimental function **Cooling**; without it, the
+  **Cool** mode is only shown while the circuit already cools.
+- ⁴ Weather-compensated cooling, if the installer set it up: the
+  controller switches between heating and cooling by the outdoor
+  temperature. Cooling room setpoints are shown; written only with the
+  experimental function **Cooling**.
 - ³ Only with the experimental function **Room influence**; without it,
   the integration writes neither, and strategies 1 and 5 are handled like
   0 and 4 (a room influence set by the installer keeps working).
 - The [flow setpoint raise](#flow-setpoint-raise) is
   only offered at strategies 0 and 1; its automatic adjustment has only been
-  tried with strategy 0.
+  tried with strategy 0. While such a circuit cools, the installer's raise
+  applies.
 
 
 Each circuit has 5 operating modes, mapped onto Home Assistant's climate
@@ -165,6 +174,9 @@ controls as follows:
 | Week 1 / Week 2 | **Auto**, preset **Week 1** / **Week 2** | shown, not settable (the controller's schedule) |
 | – (cooling) | **Cool** | not shown; the flow temperature is set on the number entity **Cooling flow setpoint heating circuit …**, see [Cooling](#cooling) |
 
+- The entity's action shows whether the circuit is in heating or cooling
+  operation (**Heating** / **Cooling**, from the circuit's status), not
+  whether the heat pump runs right now.
 - The program in **Auto** is selected via the **preset** dropdown.
 - **Switching to Auto** remembers whichever program (Week 1/Week 2/Eco)
   was last active, so you don't need to re-select it every time.
@@ -258,8 +270,9 @@ it.
 Cooling is an [experimental function](#experimental-functions): turn on
 **Cooling** under the entry's cog icon (**Configure**) →
 **Experimental functions**, and only if the installation can cool. Without
-it, strategies 4 and 5 are handled like 0 and 1, and the integration never
-writes a cooling flow setpoint. Turning it off while a circuit cools first
+it, the integration never writes a cooling setpoint and cooling can't be
+chosen; cooling the controller does on its own is still shown (see below).
+Turning it off while a circuit cools first
 asks for a confirmation, then turns cooling off (flow setpoint 0), checks
 that it is off, and only then saves. Removing the integration leaves
 cooling as it is, e.g. for another system taking over the heat pump.
@@ -270,13 +283,37 @@ are enabled once **Cooling** is turned on (unless you disabled them
 yourself), otherwise you can enable them under **Settings → Devices &
 Services → this integration → Entities**.
 
-A heating circuit can cool if its control strategy, set by the installer,
-is "Weather-compensated heating + constant cooling" or "Weather-compensated
-heating with room influence + constant cooling". The integration reads this
-when it is set up; if cooling is added later, open the entry's cog icon
-(**Configure**) → the heating circuit and save once.
+A heating circuit cools in one of two ways, depending on its control
+strategy set by the installer. The integration reads the strategy when it
+is set up; if it changes later, open the entry's cog icon (**Configure**) →
+the heating circuit and save once.
 
-The circuit then offers **Cool** as an additional mode, and a number entity
+#### Weather-compensated cooling (strategies 0, 1 and 2)
+
+If the installer set it up, the controller switches between heating and
+cooling by the outdoor temperature on its own; no register tells whether
+an installation does this. While the circuit's status shows cooling:
+
+- The climate entity keeps its mode (Off / Heat / Auto), and its action
+  shows **Cooling**. Note that **Heat** stands for the controller's mode
+  Constant, which then cools.
+- The target temperature is the cooling room setpoint: in Constant the
+  normal one, with the Eco preset the eco one (shown as stored, without a
+  Smart Grid offset); in Week 1 / Week 2 the controller's current room
+  setpoint. Changing it writes the cooling room setpoint, only with the
+  experimental function **Cooling**; without it, the setpoint is shown but
+  can't be changed. The cooling room setpoints need gateway software 2.39
+  or newer; without them, the current room setpoint is shown.
+- A [flow setpoint raise](#flow-setpoint-raise) set by the integration is
+  replaced by the installer's raise, see there.
+
+#### Constant cooling (strategies 4 and 5)
+
+"Weather-compensated heating + constant cooling" and "Weather-compensated
+heating with room influence + constant cooling": the circuit offers **Cool**
+as an additional mode (with the experimental function **Cooling**; without
+it, **Cool** is only shown while the circuit already cools, e.g. set on the
+controller, and can be left but not chosen again), and a number entity
 **Cooling flow setpoint heating circuit …** sets the flow temperature it
 cools with (15–25 °C in steps of 1 °C, default 18 °C; the lower bound is raised
 to the circuit's minimum cooling flow temperature set by the installer).
@@ -300,8 +337,8 @@ until you turn them on under the entry's cog icon (**Configure**) →
 circuit's form. Keep an eye on the heating after turning one on: they can
 make the heat pump run less efficiently, or rooms get too cold or too warm.
 
-- **Cooling** — enables cooling for heating circuits whose control strategy
-  includes it, see [Cooling](#cooling).
+- **Cooling** — choosing cooling and writing cooling setpoints, see
+  [Cooling](#cooling).
 - **Room influence** — switching room influence and sending a room
   temperature, see below.
 - **Flow setpoint raise** — see below.
@@ -326,7 +363,12 @@ of 0.1 K; the heat pump's target temperature that results is rounded down to
 water cools down or mixes on the way, e.g. in a buffer. The controller uses
 the same value while cooling, then as how much lower the heat pump cools,
 which is why the raise is only offered at the control strategies 0 and 1
-(weather-compensated, with or without room influence). It isn't offered at
+(weather-compensated, with or without room influence). These can still cool
+weather-compensated: once a circuit's status shows cooling (on the next
+poll after the controller switched), the integration writes back the raise
+it found on the controller, pauses the automatic adjustment and refuses
+changes; once the circuit heats again, the raise from before is written
+back. It isn't offered at
 all if the heat pump has a buffer module (PS): then the function is missing
 under **Experimental functions**.
 
@@ -444,8 +486,7 @@ the underlying setpoint itself. They exist only where they can have an
 effect:
 
 - heating circuits 1–3 and DHW: always;
-- cooling of heating circuit 1–3: only while the circuit runs on control
-  strategy 3, 4 or 5;
+- cooling of heating circuit 1–3: always (every strategy can cool);
 - buffer heating / cooling: per buffer module (PS, UnitId 142 or 143), only
   while that module is found; with a separate heating and cooling buffer,
   for both. Set **Smart Grid control** back to **Normal

@@ -319,6 +319,9 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         # FlowSetpointRaiseControl (raise_control.py) while the flow setpoint
         # raise of heating circuit 1 is set up.
         self.flow_setpoint_raise: Any = None
+        # CoolingRaiseGuard (raise_control.py) while any circuit's flow
+        # setpoint raise is offered.
+        self.raise_guard: Any = None
         # Heating circuit key -> ConstantFlowControl (constant_control.py),
         # for the circuits on constant control while it is turned on.
         self.constant_controls: dict[str, Any] = {}

@@ -36,6 +36,10 @@ SOURCE_ENTITY = "sensor.e2e_room_temperature"
 WRITE_TIMEOUT_SECONDS = 90
 SETPOINT_REGISTERS = {1: 1493, 2: 1494, 3: 1495}
 MODE_REGISTER_HC1 = 1478
+NORMAL_SETPOINT_HC1 = 1481
+STATUS_HC1 = 1501
+COOLING_ROOM_NORMAL_HC1 = 31796
+COOLING_ROOM_ECO_HC1 = 31799
 FLOW_TEMP_REGISTERS = {2: 1514, 3: 1515}
 DHW_TEMP = 1500
 COOLING_FLOW_SETPOINT_HC1 = 19482
@@ -649,6 +653,23 @@ def check_cooling(token: str, entry_id: str) -> None:
         raise SystemExit("The cooling flow setpoint exists although cooling is off")
     print("OK: without the cooling option, strategy 4 is handled like 0")
 
+    # Cooling turned on at the controller shows, and can be left but not
+    # chosen again.
+    climate_entity = "climate.e2e_heat_pump_heating_circuit_1"
+    write_sim(COOLING_FLOW_SETPOINT_HC1, 200)
+    wait_for_attribute(token, climate_entity, lambda s: s["state"] == "cool")
+    call_service(
+        token, "climate", "set_hvac_mode", {"entity_id": climate_entity, "hvac_mode": "heat"}
+    )
+    expect_sim(COOLING_FLOW_SETPOINT_HC1, 0)
+    expect_sim(MODE_REGISTER_HC1, 4)
+    wait_for_attribute(
+        token,
+        climate_entity,
+        lambda s: s["state"] == "heat" and "cool" not in s["attributes"]["hvac_modes"],
+    )
+    print("OK: without the cooling option, cooling set at the controller shows and can be left")
+
     set_experimental(token, entry_id, cooling=True)
     wait_for_attribute(token, climate, lambda s: "cool" in s["attributes"]["hvac_modes"])
     wait_for_attribute(
@@ -762,6 +783,83 @@ def check_cooling(token: str, entry_id: str) -> None:
     wait_until_polling(token)
 
 
+def check_weather_cooling(token: str, entry_id: str) -> None:
+    """Strategy 0 cooling by the outdoor temperature, seen in the status."""
+    climate = "climate.e2e_heat_pump_heating_circuit_1"
+    write_sim(MODE_REGISTER_HC1, 4)
+    write_sim(SETPOINT_REGISTERS[1], 215)
+    write_sim(COOLING_ROOM_NORMAL_HC1, 245)
+    write_sim(COOLING_ROOM_ECO_HC1, 270)
+    write_sim(STATUS_HC1, 1)
+    wait_for_attribute(
+        token,
+        climate,
+        lambda s: s["attributes"].get("hvac_action") == "heating"
+        and s["attributes"].get("temperature") == 21.5,
+    )
+    heating_normal = read_sim(NORMAL_SETPOINT_HC1)
+
+    write_sim(STATUS_HC1, 9)
+    state = wait_for_attribute(
+        token,
+        climate,
+        lambda s: s["attributes"].get("hvac_action") == "cooling"
+        and s["attributes"].get("temperature") == 24.5,
+    )
+    if state["state"] != "heat" or "cool" in state["attributes"]["hvac_modes"]:
+        raise SystemExit(f"Weather-compensated cooling changed the modes: {state}")
+    try:
+        call_service(
+            token, "climate", "set_temperature", {"entity_id": climate, "temperature": 25}
+        )
+    except urllib.error.HTTPError:
+        pass
+    else:
+        raise SystemExit("A cooling room setpoint was accepted without the cooling option")
+    if read_sim(COOLING_ROOM_NORMAL_HC1) != 245:
+        raise SystemExit("A cooling room setpoint was written without the cooling option")
+    print("OK: weather-compensated cooling shows its room setpoint, read-only without the option")
+
+    set_experimental(token, entry_id, cooling=True)
+    wait_for_attribute(token, climate, lambda s: s["attributes"].get("temperature") == 24.5)
+    call_service(
+        token, "climate", "set_temperature", {"entity_id": climate, "temperature": 25}
+    )
+    expect_sim(COOLING_ROOM_NORMAL_HC1, 250)
+    wait_for_attribute(
+        token,
+        climate,
+        lambda s: s["attributes"].get("temperature") == 25.0
+        and s["attributes"].get("temperature_change_pending") is False,
+    )
+    if read_sim(NORMAL_SETPOINT_HC1) != heating_normal:
+        raise SystemExit("Setting a cooling room setpoint changed the heating one")
+    call_service(
+        token, "climate", "set_hvac_mode", {"entity_id": climate, "hvac_mode": "auto"}
+    )
+    call_service(
+        token, "climate", "set_preset_mode", {"entity_id": climate, "preset_mode": "eco"}
+    )
+    expect_sim(MODE_REGISTER_HC1, 5)
+    wait_for_attribute(token, climate, lambda s: s["attributes"].get("temperature") == 27.0)
+    call_service(
+        token, "climate", "set_temperature", {"entity_id": climate, "temperature": 26.5}
+    )
+    expect_sim(COOLING_ROOM_ECO_HC1, 265)
+    print("OK: with the cooling option, the cooling room setpoint of the mode is written")
+
+    write_sim(STATUS_HC1, 1)
+    wait_for_attribute(
+        token,
+        climate,
+        lambda s: s["attributes"].get("hvac_action") == "heating"
+        and s["attributes"].get("temperature") == 21.5,
+    )
+    print("OK: back in heating operation, the current room setpoint is shown again")
+    write_sim(MODE_REGISTER_HC1, 4)
+    set_experimental(token, entry_id, cooling=False)
+
+
 def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
     bounds = ("flow_setpoint_raise_min", "flow_setpoint_raise_max")
     number = "_pump_flow_setpoint_raise_heating_circuit_1"
@@ -813,6 +911,20 @@ def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
         token, number, lambda s: s["attributes"].get("change_pending") is False
     )
     print("OK: a written raise is shown right away and confirmed by the next poll")
+
+    # While the circuit cools, the raise found on the controller applies.
+    write_sim(STATUS_HC1, 9)
+    # Seen on the next poll.
+    expect_sim(FLOW_SETPOINT_RAISE_HC1, 5, timeout=45)
+    try:
+        call_service(token, "number", "set_value", {"entity_id": number_id, "value": 1.0})
+    except urllib.error.HTTPError:
+        pass
+    else:
+        raise SystemExit("The raise could be changed while the circuit cools")
+    write_sim(STATUS_HC1, 1)
+    expect_sim(FLOW_SETPOINT_RAISE_HC1, 13, timeout=45)
+    print("OK: while cooling, the raise found on the controller applies, then the one from before")
 
     set_experimental(token, entry_id, flow_setpoint_raise=False)
     expect_sim(FLOW_SETPOINT_RAISE_HC1, 5)
@@ -1174,6 +1286,7 @@ def main() -> None:
     check_reading_room_sensor(token, entry_id)
     check_sensor_detection(token, entry_id)
     check_cooling(token, entry_id)
+    check_weather_cooling(token, entry_id)
     check_flow_setpoint_raise(token, entry_id)
     check_constant_control(token, entry_id)
     check_room_influence_off(token, entry_id)

@@ -80,9 +80,13 @@ Addresses for heating circuits 1 / 2 / 3.
 | 29435 / 29436 / 29437 | Minimum cooling flow temperature | Vorlaufminimaltemp. Kühlen | S16 | 0.1 | R/W | y | – |
 | 30684 / 30685 / 30686 | Flow setpoint raise (`flow_setpoint_raise_hc1`–`3`) | WEZ Überhöhung/Abschlag VL-Sollwert | S16 | 0.1 K | R/W | y | – |
 | 30690 / 30691 / 30692 | Maximum flow temperature (upper bound of the constant heating flow setpoint) | Vorlauf Maximaltemp. | S16 | 0.1 | R/W | y² | – |
+| 31796 / 31797 / 31798 | Normal room setpoint cooling (weather-compensated cooling) | Normal-Raumtemperatur Kühlbetrieb | S16 | 0.1 | R/W | –³ | – |
+| 31799 / 31800 / 31801 | Eco room setpoint cooling (weather-compensated cooling) | Spar-Raumtemperatur Kühlbetrieb | S16 | 0.1 | R/W | –³ | – |
 
 ¹ Reading checked, writing not yet.
 ² Not written by the integration.
+³ Gateway software 2.39 and later. Used while the circuit's status (1501–1503)
+shows cooling at strategy 0, 1 or 2.
 
 ## Domestic hot water
 
@@ -110,8 +114,7 @@ Addresses for heating circuits 1 / 2 / 3.
 with "illegal data address" (Modbus exception 0x02), see
 [Differences from Hoval's documentation](#differences-from-hovals-documentation).
 The buffer offsets are therefore only offered while their module is found
-(see [Buffer module detection](#buffer-module-detection)); the cooling
-offsets of the heating circuits (27531–27533) only at strategy 3, 4 or 5.
+(see [Buffer module detection](#buffer-module-detection)).
 
 ## Buffer module detection
 

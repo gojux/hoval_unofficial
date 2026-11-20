@@ -56,10 +56,12 @@ from .const import (
     current_temp_source_key,
     flow_max_key,
     flow_setpoint_raise_learning,
+    flow_setpoint_raise_offered,
 )
 from .constant_control import ConstantFlowControl
 from .coordinator import HovalModbusCoordinator
 from .raise_control import (
+    CoolingRaiseGuard,
     FlowSetpointRaiseControl,
     async_sync_flow_setpoint_raise,
     suggestion_store,
@@ -143,6 +145,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         control = FlowSetpointRaiseControl(hass, coordinator, entry)
         await control.async_start()
         coordinator.flow_setpoint_raise = control
+    if any(flow_setpoint_raise_offered(entry.options, hc) for hc in HEATING_CIRCUITS):
+        guard = CoolingRaiseGuard(hass, coordinator, entry, coordinator.flow_setpoint_raise)
+        guard.async_start()
+        coordinator.raise_guard = guard
 
     for hc in present_circuits(entry.options):
         if constant_control_enabled(entry.options, hc):
@@ -328,6 +334,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             writer.async_stop()
         for constant in coordinator.constant_controls.values():
             constant.async_stop()
+        if coordinator.raise_guard is not None:
+            coordinator.raise_guard.async_stop()
         if coordinator.flow_setpoint_raise is not None:
             await coordinator.flow_setpoint_raise.async_stop()
     return unload_ok
