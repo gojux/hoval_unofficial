@@ -108,6 +108,77 @@ def request(method, path, body=None, form=None, token=None):
         return json.loads(payload) if payload else None
 
 
+def _ws_send(sock: socket.socket, text: str) -> None:
+    """Sends a masked text frame, as a WebSocket client has to."""
+    payload = text.encode()
+    header = bytearray([0x81])
+    if len(payload) < 126:
+        header.append(0x80 | len(payload))
+    elif len(payload) < 1 << 16:
+        header.append(0x80 | 126)
+        header += struct.pack("!H", len(payload))
+    else:
+        header.append(0x80 | 127)
+        header += struct.pack("!Q", len(payload))
+    mask = os.urandom(4)
+    header += mask
+    sock.sendall(bytes(header) + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+
+def _ws_receive(sock: socket.socket) -> dict:
+    """Receives one (possibly fragmented) text message."""
+
+    def exactly(count: int) -> bytes:
+        data = b""
+        while len(data) < count:
+            chunk = sock.recv(count - len(data))
+            if not chunk:
+                raise ConnectionError("WebSocket closed")
+            data += chunk
+        return data
+
+    message = b""
+    while True:
+        first, second = exactly(2)
+        length = second & 0x7F
+        if length == 126:
+            length = struct.unpack("!H", exactly(2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", exactly(8))[0]
+        message += exactly(length)
+        if first & 0x80:
+            return json.loads(message)
+
+
+def ws_command(token: str, command: dict) -> dict:
+    """Sends one command over Home Assistant's WebSocket API and returns the
+    answer to it."""
+    host, port = urllib.parse.urlsplit(HA_URL).netloc.split(":")
+    with socket.create_connection((host, int(port)), timeout=30) as sock:
+        key = "dGhlIHNhbXBsZSBub25jZQ=="
+        sock.sendall(
+            (
+                f"GET /api/websocket HTTP/1.1\r\nHost: {host}:{port}\r\n"
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+            ).encode()
+        )
+        response = b""
+        while b"\r\n\r\n" not in response:
+            response += sock.recv(1)
+        if b" 101 " not in response.split(b"\r\n", 1)[0]:
+            raise SystemExit(f"WebSocket upgrade refused: {response!r}")
+        _ws_receive(sock)  # auth_required
+        _ws_send(sock, json.dumps({"type": "auth", "access_token": token}))
+        if _ws_receive(sock).get("type") != "auth_ok":
+            raise SystemExit("WebSocket authentication failed")
+        _ws_send(sock, json.dumps({"id": 1, **command}))
+        while True:
+            answer = _ws_receive(sock)
+            if answer.get("id") == 1:
+                return answer
+
+
 def wait_for_home_assistant() -> None:
     deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
@@ -572,6 +643,31 @@ def check_reading_room_sensor(token: str, entry_id: str) -> None:
     configure_circuit(
         token, entry_id, 1, {"current_temp_source": "none", "room_influence": False}
     )
+
+
+def check_schema_card(token: str, entry_id: str) -> None:
+    """The system diagram card is served, and its WebSocket command lists the
+    components found with their entities."""
+    card_url = f"{HA_URL}/hoval_unofficial/hoval-schema-card.js"
+    with urllib.request.urlopen(card_url, timeout=30) as resp:
+        if b"hoval-schema-card" not in resp.read():
+            raise SystemExit("The card's script is not served")
+    answer = ws_command(token, {"type": "hoval_unofficial/schema", "entry_id": entry_id})
+    if not answer.get("success"):
+        raise SystemExit(f"The schema command failed: {answer}")
+    schema = answer["result"]
+    if [c["number"] for c in schema["circuits"]] != [1, 2, 3]:
+        raise SystemExit(f"The schema doesn't list the three circuits: {schema['circuits']}")
+    if not (schema["hot_water"] or {}).get("water_heater", "").startswith("water_heater."):
+        raise SystemExit(f"The schema doesn't list hot water: {schema['hot_water']}")
+    if schema["buffers"]:
+        raise SystemExit(f"The schema lists a buffer that wasn't found: {schema['buffers']}")
+    if not (schema["heat_pump"]["status"] or "").startswith("sensor."):
+        raise SystemExit(f"The schema doesn't list the heat pump status: {schema['heat_pump']}")
+    unknown = ws_command(token, {"type": "hoval_unofficial/schema", "entry_id": "missing"})
+    if unknown.get("success"):
+        raise SystemExit("The schema command answered for an unknown entry")
+    print("OK: the system diagram card is served and its schema lists the components")
 
 
 def check_dhw_bottom_sensor(token: str, entry_id: str) -> None:
@@ -1295,6 +1391,7 @@ def main() -> None:
     check(states)
     check_unanswered_registers(token, entry_id)
     check_diagnostics(token, entry_id)
+    check_schema_card(token, entry_id)
     check_timeout_option(token, entry_id)
     check_message_spacing_option(token, entry_id)
     check_dhw_bottom_sensor(token, entry_id)

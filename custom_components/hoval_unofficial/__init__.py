@@ -5,6 +5,10 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
+from pathlib import Path
+
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_HOST,
@@ -15,8 +19,11 @@ from homeassistant.const import (
     Platform,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.loader import async_get_integration
 
 from .const import (
     CIRCUIT_FLOW_TEMP_REGISTERS,
@@ -70,8 +77,16 @@ from .raise_control import (
     suggestion_store,
 )
 from .room_temp import RoomTempWriter, async_cleanup_removed_entry
+from .websocket import async_register_websocket
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# The system diagram card, served by the integration and loaded on every
+# dashboard, so it needs no resource of its own.
+CARD_URL = f"/{DOMAIN}/hoval-schema-card.js"
+CARD_PATH = Path(__file__).parent / "frontend" / "hoval-schema-card.js"
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -81,6 +96,18 @@ PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
     Platform.SWITCH,
 ]
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Serves the system diagram card and its WebSocket command."""
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(CARD_PATH), cache_headers=False)]
+    )
+    # The version makes browsers load the card again after an update.
+    integration = await async_get_integration(hass, DOMAIN)
+    add_extra_js_url(hass, f"{CARD_URL}?v={integration.version}")
+    async_register_websocket(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

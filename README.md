@@ -500,6 +500,39 @@ Whether Smart Grid needs to be pre-configured by your installer or Hoval's
 service depends on the installation — some systems accept these registers
 without any prior setup, others may not.
 
+## System diagram card
+
+The integration brings a dashboard card that shows your installation as a
+symbolic diagram: heat pump, buffer, hot water tank and heating circuits,
+each with its values, so you can see at a glance which value belongs where.
+It needs no separate download or dashboard resource. Add it to a dashboard
+with **Add card → Hoval system diagram**, or in YAML:
+
+```yaml
+type: custom:hoval-schema-card
+```
+
+Optional settings: `entry_id` (with more than one Hoval installation; by
+default the first one is shown) and `title`.
+
+- Only components the integration found are drawn. A buffer is drawn only
+  with a buffer sensor (WPF or a buffer module), since without one there is
+  no value to show; with a separate heating and cooling buffer, both.
+- The lines show what runs: red while heating, blue while cooling, yellow
+  while defrosting (the water of the buffer and the heating circuits gives
+  off the heat for it), grey when idle. While the tank is loaded (heat pump
+  status "Hot water"), the diverting valve points to the hot water tank.
+- Values are shown as "actual / target". Clicking a value opens its
+  more-info dialog with the history.
+- The footer shows outdoor temperature, power input, COP and the compressor
+  starts within the last 24 hours (from the long-term statistics).
+- While Smart Grid is in preferred operation or forced consumption, a
+  green badge shows each Smart Grid offset other than 0 at its component;
+  the offset entities have to be enabled for this.
+- The card shows entities that are enabled; a disabled one is left out.
+  It fits a normal dashboard column, but is easier to read at full width,
+  e.g. in a sections view.
+
 ## Options
 
 Available under the entry's cog icon (**Configure**) under **Settings →
