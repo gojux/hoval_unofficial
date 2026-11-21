@@ -23,6 +23,8 @@ const TEXT = {
     cooling_buffer: "Cooling buffer",
     hot_water: "Hot water",
     circuit: "Heating circuit {n}",
+    flow_short: "Flow",
+    return_short: "Return",
     actual_temp: "Actual temp.",
     target_temp: "Target temp.",
     return: "Return",
@@ -49,6 +51,8 @@ const TEXT = {
     cooling_buffer: "Kühlpuffer",
     hot_water: "Warmwasser",
     circuit: "Heizkreis {n}",
+    flow_short: "VL",
+    return_short: "RL",
     actual_temp: "Ist-Temperatur",
     target_temp: "Soll-Temperatur",
     return: "Rücklauf",
@@ -284,6 +288,7 @@ class HovalSchemaCard extends HTMLElement {
     const st = this._usable(offsetEntity);
     const offset = st ? Number(st.state) : 0;
     if (!offset) return "";
+    this._sgBadges += 1;
     const sign = offset > 0 ? "+" : "−";
     const text = `SG ${sign}${this._num(Math.abs(offset))} K`;
     return this._spot(anchor === "middle" ? x - 36 : x - 2, y - 2, 72, 22, offsetEntity, this._pill(x, y, text, "sg", 80, anchor));
@@ -335,8 +340,9 @@ class HovalSchemaCard extends HTMLElement {
   _renderShell(body) {
     const s = this._schema;
     const title = (this._config && this._config.title) || (s && s.title) || "Hoval";
+    // Only while an offset actually changes a setpoint, i.e. a badge shows.
     const sgChip =
-      s && this._sgActive
+      s && this._sgActive && this._sgBadges > 0
         ? `<span class="chip spot" tabindex="0" role="button" data-entity="${esc(s.smart_grid_status)}">Smart Grid · ${esc(this._formatState(s.smart_grid_status) || "")}</span>`
         : "";
     this.shadowRoot.innerHTML = `
@@ -354,6 +360,8 @@ class HovalSchemaCard extends HTMLElement {
     const mode = (statusState && MODE_BY_STATUS[statusState.state]) || "idle";
     const sgState = this._usable(s.smart_grid_status);
     this._sgActive = !!(sgState && SMART_GRID_ACTIVE.includes(sgState.state));
+    // Counted while drawing; the Smart Grid chip only shows with a badge.
+    this._sgBadges = 0;
 
     const defrost = mode === "defrost";
     const hpColor = { heat: "hot", cool: "cold", dhw: "hot", defrost: "amber", idle: "idle" }[mode];
@@ -463,7 +471,8 @@ class HovalSchemaCard extends HTMLElement {
           ${this._heatPump(hp, mode, hpColor, statusState)}
           ${hasDhw ? this._hotWater(s.hot_water, dhwFeed) : ""}
           ${circuits.map((c) => this._circuit(c, defrost)).join("")}
-          <text class="small" x="204" y="72">VL</text><text class="small" x="204" y="176">RL</text>
+          <text class="small" x="204" y="72">${esc(this._t("flow_short"))}</text>
+          <text class="small" x="204" y="176">${esc(this._t("return_short"))}</text>
         </svg>
       </div>
       ${this._footer(hp)}`;

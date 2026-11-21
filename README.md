@@ -12,6 +12,15 @@ entities for up to 3 room heating circuits.
 
 Setup is done entirely through the Home Assistant UI — no YAML required.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/schema-card-dark.png">
+  <img alt="System diagram card: heat pump, buffer, hot water tank and two heating circuits with their values" src="images/schema-card-light.png">
+</picture>
+
+The included [system diagram card](#system-diagram-card) shows your
+installation at a glance: which components there are, what is running, and
+which value belongs where (example values).
+
 ## Disclaimer
 
 This is an **unofficial**, community-developed integration and is **not
@@ -75,6 +84,9 @@ entry's three-dot menu → **Reconfigure**.
 
 ## What you get
 
+- **System diagram card** — a dashboard card that draws the heat pump,
+  buffer, hot water tank and heating circuits the integration found, with
+  their values; see [System diagram card](#system-diagram-card).
 - **Sensors** — outdoor temperature, flow/return temperatures, heat
   quantities, operating hours, COP, seasonal performance factor (SPF), and
   a translated status sensor
@@ -527,8 +539,9 @@ default the first one is shown) and `title`.
 - The footer shows outdoor temperature, power input, COP and the compressor
   starts within the last 24 hours (from the long-term statistics).
 - While Smart Grid is in preferred operation or forced consumption, a
-  green badge shows each Smart Grid offset other than 0 at its component;
-  the offset entities have to be enabled for this.
+  green badge shows each Smart Grid offset other than 0 at its component,
+  and the card's header shows the Smart Grid mode; without such an offset,
+  neither shows. The offset entities have to be enabled for this.
 - The card shows entities that are enabled; a disabled one is left out.
   It fits a normal dashboard column, but is easier to read at full width,
   e.g. in a sections view.
