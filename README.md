@@ -534,8 +534,10 @@ default the first one is shown) and `title`.
   while defrosting (the water of the buffer and the heating circuits gives
   off the heat for it), grey when idle. While the tank is loaded (heat pump
   status "Hot water"), the diverting valve points to the hot water tank.
-- Values are shown as "actual / target". Clicking a value opens its
-  more-info dialog with the history.
+- Values are shown as "actual / target" (hover for a tooltip). A hot water
+  tank with two sensors shows its target once for the tank: loading starts
+  when the top sensor falls below it and ends when the bottom sensor
+  reaches it. Clicking a value opens its more-info dialog with the history.
 - The footer shows outdoor temperature, power input, COP and the compressor
   starts within the last 24 hours (from the long-term statistics).
 - While Smart Grid is in preferred operation or forced consumption, a

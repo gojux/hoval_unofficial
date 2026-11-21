@@ -25,8 +25,7 @@ const TEXT = {
     circuit: "Heating circuit {n}",
     flow_short: "Flow",
     return_short: "Return",
-    actual_temp: "Actual temp.",
-    target_temp: "Target temp.",
+    temperature: "Temp.",
     return: "Return",
     heat_output: "Heat output",
     cooling_output: "Cooling output",
@@ -36,7 +35,9 @@ const TEXT = {
     top: "top",
     bottom: "bottom",
     middle: "middle",
+    actual_target: "Actual {actual}, target {target}",
     target: "Target",
+    dhw_target_tip: "Loading starts when the top falls below the target and ends when the bottom reaches it.",
     outdoor: "Outdoor temperature",
     power_input: "Power input",
     cop: "COP",
@@ -53,8 +54,7 @@ const TEXT = {
     circuit: "Heizkreis {n}",
     flow_short: "VL",
     return_short: "RL",
-    actual_temp: "Ist-Temperatur",
-    target_temp: "Soll-Temperatur",
+    temperature: "Temperatur",
     return: "Rücklauf",
     heat_output: "Wärmeleistung",
     cooling_output: "Kühlleistung",
@@ -64,7 +64,9 @@ const TEXT = {
     top: "oben",
     bottom: "unten",
     middle: "Mitte",
+    actual_target: "Ist {actual}, Soll {target}",
     target: "Soll",
+    dhw_target_tip: "Die Ladung startet, wenn oben unter den Sollwert fällt, und endet, wenn unten ihn erreicht.",
     outdoor: "Außentemperatur",
     power_input: "Leistungsaufnahme",
     cop: "COP",
@@ -249,19 +251,27 @@ class HovalSchemaCard extends HTMLElement {
 
   // ---- SVG building blocks ----------------------------------------------
 
+  // "actual / target": the target smaller and grey, explained by a tooltip.
+  _withTarget(value, target) {
+    return target !== undefined ? `${esc(value)}<tspan class="soft"> / ${esc(target)}</tspan>` : esc(value);
+  }
+
+  _targetTip(value, target) {
+    return target !== undefined ? this._t("actual_target", { actual: value, target }) : undefined;
+  }
+
   _row(x1, x2, y, label, value, target, entityId) {
     const text =
       `<text class="label" x="${x1}" y="${y}">${esc(label)}</text>` +
-      `<text class="value" x="${x2}" y="${y}" text-anchor="end">${esc(value)}` +
-      (target !== undefined ? `<tspan class="soft"> / ${esc(target)}</tspan>` : "") +
-      `</text>`;
-    return this._spot(x1 - 5, y - 14, x2 - x1 + 10, 20, entityId, text);
+      `<text class="value" x="${x2}" y="${y}" text-anchor="end">${this._withTarget(value, target)}</text>`;
+    return this._spot(x1 - 5, y - 14, x2 - x1 + 10, 20, entityId, text, this._targetTip(value, target));
   }
 
-  _spot(x, y, w, h, entityId, inner) {
-    if (!entityId) return inner;
+  _spot(x, y, w, h, entityId, inner, tip) {
+    const title = tip ? `<title>${esc(tip)}</title>` : "";
+    if (!entityId) return title ? `<g>${title}${inner}</g>` : inner;
     return (
-      `<g class="spot" tabindex="0" role="button" data-entity="${esc(entityId)}">` +
+      `<g class="spot" tabindex="0" role="button" data-entity="${esc(entityId)}">${title}` +
       `<rect class="hit" x="${x}" y="${y}" width="${w}" height="${h}" rx="5"/>${inner}</g>`
     );
   }
@@ -463,7 +473,7 @@ class HovalSchemaCard extends HTMLElement {
         this._pump(588, y, c.color);
     }
 
-    const height = Math.max(hasDhw ? 465 : 250, last ? last.top + CIRCUIT_HEIGHT + 15 : 0);
+    const height = Math.max(hasDhw ? 445 : 250, last ? last.top + CIRCUIT_HEIGHT + 15 : 0);
     return `
       <div class="diagram">
         <svg viewBox="0 0 780 ${height}" role="img" aria-label="${esc(this._t("heat_pump"))}">
@@ -482,19 +492,19 @@ class HovalSchemaCard extends HTMLElement {
     const cooling = mode === "cool";
     const power = cooling ? hp.cooling_power : hp.power;
     const status = statusState ? this._formatState(hp.status) : "—";
+    const target = this._usable(hp.target);
     const rows = [
-      [this._t("actual_temp"), hp.temperature, 1],
-      [this._t("target_temp"), hp.target, 1],
+      [this._t("temperature"), hp.temperature, 1, target ? this._num(target.state) : undefined],
       [this._t("return"), hp.return, 1],
       [this._t(cooling ? "cooling_output" : "heat_output"), power, 1],
       [this._t("modulation"), hp.modulation, 0],
     ].filter(([, id]) => id);
     let svg =
-      `<rect class="box" x="20" y="40" width="180" height="170" rx="12"/>` +
-      `<text class="title" x="34" y="64">${esc(this._t("heat_pump"))}</text>` +
-      this._spot(30, 72, 160, 26, hp.status, this._pill(34, 74, status, mode === "idle" ? "idle" : color, 152));
-    rows.forEach(([label, id, digits], i) => {
-      svg += this._row(34, 186, 117 + i * 20, label, this._value(id, digits), undefined, id);
+      `<rect class="box" x="10" y="40" width="190" height="170" rx="12"/>` +
+      `<text class="title" x="24" y="64">${esc(this._t("heat_pump"))}</text>` +
+      this._spot(20, 72, 170, 26, hp.status, this._pill(24, 74, status, mode === "idle" ? "idle" : color, 162));
+    rows.forEach(([label, id, digits, rowTarget], i) => {
+      svg += this._row(24, 188, 122 + i * 22, label, this._value(id, digits), rowTarget, id);
     });
     return svg;
   }
@@ -554,24 +564,37 @@ class HovalSchemaCard extends HTMLElement {
     const heater = this._usable(dhw.water_heater);
     const attrs = heater ? heater.attributes : {};
     const id = dhw.water_heater;
+    // The controller loads the tank to its target at the (top) sensor SF/SF1.
+    const current = this._temp(attrs.current_temperature);
+    const target = attrs.temperature !== undefined && attrs.temperature !== null ? this._num(attrs.temperature) : undefined;
+    const tip = this._targetTip(current, target);
     let svg =
-      `<rect class="tank" x="40" y="280" width="160" height="${dhw.sg_offset && this._sgActive ? 170 : 150}" rx="28" style="fill:var(--hsc-${loading ? "hot-tint" : "tank"})"/>` +
-      `<path class="pipe c-${loading ? "hot" : "idle"}" style="stroke-width:3" d="M200 330 H178 L160 338 L190 346 L160 354 L190 362 L160 370 L178 378 V385 H200"/>` +
+      `<rect class="tank" x="40" y="280" width="160" height="150" rx="28" style="fill:var(--hsc-${loading ? "hot-tint" : "tank"})"/>` +
+      `<path class="pipe c-${loading ? "hot" : "idle"}" style="stroke-width:3" d="M200 330 H190 L179 338 L197 346 L179 354 L197 362 L179 370 L190 378 V385 H200"/>` +
       `<text class="title" x="58" y="308">${esc(this._t("hot_water"))}</text>`;
+    let pillY;
     if (dhw.bottom) {
+      // With two sensors the target belongs to the tank: loading starts at
+      // the top sensor and ends at the bottom one (SF2, switch-off sensor).
       svg +=
-        this._row(58, 148, 340, this._t("top"), this._temp(attrs.current_temperature), undefined, id) +
-        this._row(58, 148, 362, this._t("bottom"), this._value(dhw.bottom), undefined, dhw.bottom) +
-        this._spot(52, 370, 100, 20, id, `<text class="label" x="58" y="384">${esc(this._t("target"))} ${esc(this._temp(attrs.temperature))}</text>`);
+        this._row(58, 166, 334, this._t("top"), current, undefined, id) +
+        this._row(58, 166, 356, this._t("bottom"), this._value(dhw.bottom), undefined, dhw.bottom) +
+        this._spot(52, 364, 114, 20, id,
+          `<text class="label" x="58" y="378">${esc(this._t("target"))} ${esc(this._temp(attrs.temperature))}</text>`,
+          this._t("dhw_target_tip"));
+      pillY = 386;
     } else {
       svg +=
-        `<text class="small" x="58" y="328">${esc(this._t("middle"))}</text>` +
-        this._spot(52, 330, 100, 34, id, `<text class="big" x="58" y="356">${esc(this._temp(attrs.current_temperature))}</text>`) +
-        this._spot(52, 368, 100, 20, id, `<text class="label" x="58" y="382">${esc(this._t("target"))} ${esc(this._temp(attrs.temperature))}</text>`);
+        `<text class="small" x="58" y="326">${esc(this._t("middle"))}</text>` +
+        this._spot(52, 330, 112, 28, id,
+          `<text class="big" x="58" y="352">${esc(current)}` +
+          (target !== undefined ? `<tspan class="soft target"> / ${esc(target)}</tspan>` : "") +
+          `</text>`, tip);
+      pillY = 368;
     }
     const mode = heater ? this._formatState(id) : "—";
-    svg += this._spot(52, 392, 100, 26, id, this._pill(58, 396, mode, "idle", 96));
-    svg += this._sgBadge(58, 420, dhw.sg_offset);
+    svg += this._spot(52, pillY - 4, 100, 26, id, this._pill(58, pillY, mode, "idle", 96));
+    svg += this._sgBadge(58, pillY + 24, dhw.sg_offset);
     return svg;
   }
 
@@ -649,7 +672,8 @@ const STYLE = `
   .value { font-size: 13px; font-weight: 600; fill: var(--hsc-fg); }
   .soft { font-weight: 400; fill: var(--hsc-muted); }
   .small { font-size: 11.5px; fill: var(--hsc-muted); }
-  .big { font-size: 24px; font-weight: 500; fill: var(--hsc-fg); }
+  .big { font-size: 20px; font-weight: 500; fill: var(--hsc-fg); }
+  .big .target { font-size: 13px; }
   .halo { fill: none; stroke: var(--hsc-card); stroke-width: 10; }
   .pipe { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
   .pipe.r { stroke-opacity: .5; }
