@@ -76,7 +76,11 @@ from .const import (
     previous_strategy_key,
     room_influence_enabled,
 )
-from . import async_read_buffers, async_read_circuit_options
+from . import (
+    async_read_buffers,
+    async_read_circuit_options,
+    async_read_dhw_bottom_sensor,
+)
 from .coordinator import HovalModbusCoordinator, timeout_supported
 from .raise_control import async_sync_flow_setpoint_raise
 from .room_temp import has_room_sensor, parse_room_temperature
@@ -502,6 +506,7 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
                 == CURRENT_TEMP_SOURCE_ENTITY_WRITE
             ]
             if not sending:
+                await self._async_detect_dhw_bottom_sensor(options)
                 return self.async_create_entry(title="", data=options)
             errors["base"] = "room_influence_sending"
             placeholders["circuits"] = _circuit_numbers(sending)
@@ -555,6 +560,19 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
             errors=errors,
             description_placeholders=placeholders,
         )
+
+    async def _async_detect_dhw_bottom_sensor(self, options: dict[str, Any]) -> None:
+        """Looks for the hot water tank's bottom sensor again, e.g. one fitted
+        later. Keeps what is stored if the controller can't be read."""
+        coordinator: HovalModbusCoordinator | None = self.hass.data.get(
+            DOMAIN, {}
+        ).get(self.config_entry.entry_id)
+        if coordinator is None or not dhw_present(options):
+            return
+        try:
+            options.update(await async_read_dhw_bottom_sensor(coordinator))
+        except UpdateFailed as err:
+            _LOGGER.warning("Looking for the hot water bottom sensor failed: %s", err)
 
     async def async_step_heating_circuit_1(
         self, user_input: dict[str, Any] | None = None

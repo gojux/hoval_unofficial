@@ -17,6 +17,8 @@ from .const import (
     BUFFER_SENSOR_REGISTER,
     CONF_BUFFER_SENSOR,
     CIRCUIT_SENSOR_KEYS,
+    DHW_BOTTOM_TEMP_REGISTER,
+    dhw_bottom_sensor,
     COOLING_SENSOR_KEYS,
     CONTROLLER_ERROR_MAP,
     CONTROLLER_ERROR_OPTIONS,
@@ -101,6 +103,10 @@ async def async_setup_entry(
         for unit_id in found_buffer_modules(entry.options)
         for reg, key in BUFFER_MODULE_SENSOR_REGISTERS[unit_id]
     )
+    if dhw_bottom_sensor(entry.options):
+        entities.append(
+            HovalSensor(coordinator, entry, DHW_BOTTOM_TEMP_REGISTER, enabled=True)
+        )
     entities.append(HovalStatusSensor(coordinator, entry))
     entities.append(HovalControllerErrorSensor(coordinator, entry))
     entities.append(HovalSmartGridStatusSensor(coordinator, entry))

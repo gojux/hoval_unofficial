@@ -60,7 +60,7 @@
           "message_spacing": "Default: 0 (no gap). Can help if the gateway sometimes doesn't answer requests sent right after each other. Applies to all requests to this device ID over the shared connection, also those of other integrations, and makes each poll take longer.",
           "heating_circuit_2_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
           "heating_circuit_3_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
-          "dhw_present": "Without it, the integration neither creates its entities nor reads or writes its values."
+          "dhw_present": "Without it, the integration neither creates its entities nor reads or writes its values. Saving also looks for a second sensor at the bottom of the hot water tank, e.g. one fitted later."
         }
       },
       "circuit": {
@@ -365,6 +365,9 @@
       },
       "buffer_temp": {
         "name": "Buffer temperature WPF"
+      },
+      "dhw_bottom_temp": {
+        "name": "Hot water temperature bottom"
       },
       "flow_temp_hc1": {
         "name": "Current flow temperature HC1"

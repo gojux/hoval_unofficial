@@ -42,6 +42,9 @@ COOLING_ROOM_NORMAL_HC1 = 31796
 COOLING_ROOM_ECO_HC1 = 31799
 FLOW_TEMP_REGISTERS = {2: 1514, 3: 1515}
 DHW_TEMP = 1500
+# Second hot water sensor at the bottom of the tank (SF2).
+DHW_BOTTOM_TEMP = 27483
+DHW_BOTTOM_SENSOR = "_hot_water_temperature_bottom"
 COOLING_FLOW_SETPOINT_HC1 = 19482
 COOLING_FLOW_MIN_HC1 = 29435
 HEATING_CONSTANT_FLOW_HC1 = 1490
@@ -569,6 +572,18 @@ def check_reading_room_sensor(token: str, entry_id: str) -> None:
     configure_circuit(
         token, entry_id, 1, {"current_temp_source": "none", "room_influence": False}
     )
+
+
+def check_dhw_bottom_sensor(token: str, entry_id: str) -> None:
+    """The hot water tank's bottom sensor reads 0 without the sensor; it is
+    found when the general options are saved, e.g. after fitting it."""
+    states = request("GET", "/api/states", token=token)
+    if any(s["entity_id"].endswith(DHW_BOTTOM_SENSOR) for s in states):
+        raise SystemExit("The hot water bottom sensor exists although it reads 0")
+    write_sim(DHW_BOTTOM_TEMP, 412)
+    submit_general_and_wait_for_reload(token, entry_id, {"scan_interval": 30})
+    wait_for_attribute(token, DHW_BOTTOM_SENSOR, lambda s: s["state"] == "41.2")
+    print("OK: the hot water bottom sensor is found when the general options are saved")
 
 
 def check_sensor_detection(token: str, entry_id: str) -> None:
@@ -1282,6 +1297,7 @@ def main() -> None:
     check_diagnostics(token, entry_id)
     check_timeout_option(token, entry_id)
     check_message_spacing_option(token, entry_id)
+    check_dhw_bottom_sensor(token, entry_id)
     check_sending(token, entry_id)
     check_reading_room_sensor(token, entry_id)
     check_sensor_detection(token, entry_id)

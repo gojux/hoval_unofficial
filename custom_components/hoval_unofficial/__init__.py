@@ -21,9 +21,12 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from .const import (
     CIRCUIT_FLOW_TEMP_REGISTERS,
     COOLING_SENSOR_KEYS,
+    CONF_DHW_BOTTOM_SENSOR,
     CONF_DHW_PRESENT,
+    DHW_BOTTOM_TEMP_REGISTER,
     DHW_CURRENT_TEMP_REGISTER,
     HEATING_CIRCUIT_1,
+    dhw_present,
     circuit_present_key,
     present_circuits,
     BUFFER_MODULE_TEMP_REGISTERS,
@@ -43,8 +46,8 @@ from .const import (
     HeatingCircuit,
     RegisterDef,
     buffer_module_key,
-    buffer_module_temp_plausible,
     buffer_sensor_found_key,
+    temp_sensor_plausible,
     found_buffer_modules,
     constant_control_enabled,
     cooling_enabled,
@@ -127,6 +130,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ):
         try:
             circuit_options.update(await async_read_buffers(coordinator))
+        except UpdateFailed:
+            pass
+    if CONF_DHW_BOTTOM_SENSOR not in entry.options and dhw_present(
+        {**entry.options, **circuit_options}
+    ):
+        try:
+            circuit_options.update(await async_read_dhw_bottom_sensor(coordinator))
         except UpdateFailed:
             pass
     options = {**entry.options, **circuit_options}
@@ -296,7 +306,7 @@ async def async_read_buffers(coordinator: HovalModbusCoordinator) -> dict[str, b
     options: dict[str, bool] = {}
     for unit_id, regs in BUFFER_MODULE_TEMP_REGISTERS.items():
         found = [
-            buffer_module_temp_plausible(
+            temp_sensor_plausible(
                 await coordinator.async_read_value_if_present(
                     reg, unanswered_absent=True
                 )
@@ -317,6 +327,21 @@ async def async_read_buffers(coordinator: HovalModbusCoordinator) -> dict[str, b
         )
     )
     return options
+
+
+async def async_read_dhw_bottom_sensor(
+    coordinator: HovalModbusCoordinator,
+) -> dict[str, bool]:
+    """Whether the hot water tank has a sensor at the bottom (SF2), as an
+    option to store. A register the controller doesn't answer for counts as
+    missing. Raises UpdateFailed."""
+    return {
+        CONF_DHW_BOTTOM_SENSOR: temp_sensor_plausible(
+            await coordinator.async_read_value_if_present(
+                DHW_BOTTOM_TEMP_REGISTER, unanswered_absent=True
+            )
+        )
+    }
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:

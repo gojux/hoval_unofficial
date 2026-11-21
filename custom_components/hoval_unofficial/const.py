@@ -460,6 +460,21 @@ DHW_MODE_REGISTER = RegisterDef(
     writable=True,
 )
 
+# Second tank sensor (SF2) at the bottom of the tank; DHW_CURRENT_TEMP_REGISTER
+# is then the one at the top. Not every tank has it, and without it the
+# controller reads 0. Only polled once found (CONF_DHW_BOTTOM_SENSOR), so the
+# first refresh doesn't read it.
+DHW_BOTTOM_TEMP_REGISTER = RegisterDef(
+    key="dhw_bottom_temp",
+    name="DHW temperature bottom",
+    address=27483,
+    data_type="int16",
+    scale=0.1,
+    unit="°C",
+    device_class="temperature",
+    enabled_default=False,
+)
+
 # All DHW registers, polled together with SENSOR_REGISTERS/NUMBER_REGISTERS
 # by the coordinator.
 DHW_REGISTERS: list[RegisterDef] = [
@@ -468,6 +483,7 @@ DHW_REGISTERS: list[RegisterDef] = [
     DHW_ECO_TARGET_TEMP_REGISTER,
     DHW_ACTUAL_TARGET_TEMP_REGISTER,
     DHW_MODE_REGISTER,
+    DHW_BOTTOM_TEMP_REGISTER,
 ]
 
 # Raw values expected in DHW_MODE_REGISTER. Adjust these to match your heat
@@ -1155,6 +1171,18 @@ def dhw_present(options: Mapping[str, Any]) -> bool:
     return bool(options.get(CONF_DHW_PRESENT, True))
 
 
+# Whether the hot water tank has a second sensor at the bottom (SF2, see
+# DHW_BOTTOM_TEMP_REGISTER), read when the integration starts (if not stored
+# yet) and whenever the general options are saved. Its sensor is only
+# created then.
+CONF_DHW_BOTTOM_SENSOR = "dhw_bottom_sensor"
+
+
+def dhw_bottom_sensor(options: Mapping[str, Any]) -> bool:
+    """Whether the hot water tank's bottom sensor is there."""
+    return dhw_present(options) and bool(options.get(CONF_DHW_BOTTOM_SENSOR))
+
+
 def cooling_supported_key(hc: HeatingCircuit) -> str:
     """Options storage key for whether the circuit can cool, read from its
     control strategy when the integration is set up or the circuit is saved
@@ -1330,7 +1358,7 @@ BUFFER_MODULE_TEMP_REGISTERS: dict[int, tuple[RegisterDef, RegisterDef]] = {
     )
     for unit_id, address in ((142, 17324), (143, 17386))
 }
-BUFFER_MODULE_TEMP_RANGE = (-20.0, 110.0)
+TEMP_SENSOR_RANGE = (-20.0, 110.0)
 
 # The sensors of a found buffer module, by UnitId, with their translation
 # key: the two buffer sensors above and the buffer setpoint (datapoint 1015
@@ -1392,13 +1420,14 @@ def buffer_module_translation(
     return translation_key, {}
 
 
-def buffer_module_temp_plausible(value: float | None) -> bool:
-    """Whether a buffer module temperature register shows a module: a value
+def temp_sensor_plausible(value: float | None) -> bool:
+    """Whether a temperature register of an optional sensor (a buffer
+    module's or the hot water tank's bottom one) shows the sensor: a value
     other than 0 within a plausible range."""
     return (
         value is not None
         and value != 0
-        and BUFFER_MODULE_TEMP_RANGE[0] <= value <= BUFFER_MODULE_TEMP_RANGE[1]
+        and TEMP_SENSOR_RANGE[0] <= value <= TEMP_SENSOR_RANGE[1]
     )
 
 

@@ -97,7 +97,13 @@ shows cooling at strategy 0, 1 or 2.
 | 1498 | `dhw_eco_target_temp` | Spar-Warmwassertemperatur | U8 | 1 | R/W | y |
 | 1499 | `dhw_actual_target_temp` | Warmwasser-Soll | S16 | 0.1 | R | y |
 | 1500 | `dhw_current_temp` | Warmwasser-Ist SF | S16 | 0.1 | R | y |
+| 27483 | `dhw_bottom_temp` | Warmwasser - Isttemperatur Unten (SF2) (only with this sensor) | S16 | 0.1 | R | – ¹ |
 | 27509 | `smart_grid_offset_dhw` | Smart-Grid (Offset) WW-Sollwert | S16 | 0.1 K | R/W | y |
+
+¹ From the Modbus guideline (example sheet), which lists it as U16. Not every
+tank has this sensor; on an installation without it the controller reads 0,
+which the integration takes as "no sensor". Not checked yet with the sensor
+fitted.
 
 ## Smart Grid
 

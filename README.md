@@ -99,7 +99,11 @@ entry's three-dot menu → **Reconfigure**.
   buffer (142), and the entities are named **Heating buffer …** and
   **Cooling buffer …**.
 - **Domestic hot water (DHW)** — a `water_heater` entity showing tank
-  temperature, target temperature, and operating mode.
+  temperature, target temperature, and operating mode. A tank with a second
+  sensor at the bottom (SF2) also gets the sensor **Hot water temperature
+  bottom**; the `water_heater` entity then shows the top sensor. The
+  integration looks for it when it is set up and whenever the general
+  options are saved.
 - **Room heating circuits (HC1/HC2/HC3)** — `climate` entities for up to
   three heating circuits (not for circuits on constant control, see
   [Control strategies](#control-strategies)), and sensors for each circuit's

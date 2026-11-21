@@ -60,7 +60,7 @@
           "message_spacing": "Standard: 0 (kein Abstand). Kann helfen, wenn das Gateway direkt aufeinanderfolgende Anfragen manchmal nicht beantwortet. Gilt für alle Anfragen an diese Geräte-ID über die geteilte Verbindung, auch die anderer Integrationen, und verlängert jede Abfrage.",
           "heating_circuit_2_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
           "heating_circuit_3_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
-          "dhw_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür."
+          "dhw_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür. Beim Speichern sucht sie außerdem einen zweiten Fühler unten im Warmwasserspeicher, z. B. einen nachgerüsteten."
         }
       },
       "circuit": {
@@ -355,6 +355,9 @@
       },
       "buffer_temp": {
         "name": "Puffertemperatur WPF"
+      },
+      "dhw_bottom_temp": {
+        "name": "Warmwassertemperatur unten"
       },
       "flow_temp_hc1": {
         "name": "Vorlauf Ist-Temperatur Heizkreis 1"
