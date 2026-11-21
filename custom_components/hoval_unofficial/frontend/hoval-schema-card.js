@@ -142,8 +142,10 @@ class HovalSchemaCard extends HTMLElement {
     return 7;
   }
 
+  // The whole width of its section, also of a section spanning several
+  // columns (12 grid columns each).
   getGridOptions() {
-    return { columns: 12, min_columns: 6 };
+    return { columns: "full", min_columns: 6 };
   }
 
   async _load() {
