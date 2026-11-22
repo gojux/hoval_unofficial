@@ -87,6 +87,9 @@ entry's three-dot menu → **Reconfigure**.
 - **System diagram card** — a dashboard card that draws the heat pump,
   buffer, hot water tank and heating circuits the integration found, with
   their values; see [System diagram card](#system-diagram-card).
+- **Hoval dashboard** — a ready-made dashboard with the diagram, the
+  thermostats, history, energy and settings, built from what the
+  integration found; see [Hoval dashboard](#hoval-dashboard).
 - **Sensors** — outdoor temperature, flow/return temperatures, heat
   quantities, operating hours, COP, seasonal performance factor (SPF), and
   a translated status sensor
@@ -555,6 +558,47 @@ The card's settings can be set in the card editor's form (or in YAML):
 - The card shows entities that are enabled; a disabled one is left out.
   It fits a normal dashboard column, but is easier to read at full width,
   e.g. in a sections view.
+
+## Hoval dashboard
+
+The integration also brings a whole dashboard. Create it under
+**Settings → Dashboards → Add dashboard → Hoval heat pump**, or set a
+dashboard's raw configuration to:
+
+```yaml
+strategy:
+  type: custom:hoval
+```
+
+It has four views:
+
+- **Overview** — the system diagram card, a thermostat per heating circuit
+  and for hot water, and the heat per day of the last 7 days (heating, hot
+  water, and cooling if its entity is enabled).
+- **History** — the last 24 hours: the status of the heat pump (and of the
+  heating circuits and Smart Grid, if enabled), the heat generator and
+  buffer temperatures, each heating circuit's flow and room temperatures,
+  hot water, and power and modulation.
+- **Energy** — heat, electricity and compressor starts per day over the
+  last 30 days, and the counters (heat quantities, energy, operating hours,
+  switching cycles, SPF).
+- **Settings & diagnostics** — the entities of each heating circuit, Smart
+  Grid, and every other entity of the integration that no other view shows.
+
+The dashboard is built each time it is opened, from the entities that are
+enabled; enabling an entity (e.g. the Smart Grid ones) adds it, and a card
+without any enabled entity is left out. With more than one Hoval
+installation, pick the installation in the dashboard's settings (or set
+`entry_id` under `strategy`).
+
+To change the dashboard, open its edit mode and choose **Take control**:
+from then on it is a normal dashboard you can edit freely, which no longer
+follows the integration.
+
+The energy charts use the unit the entity shows. The heat and energy
+counters count in MWh, so a day's value is a small number such as 0.035; to
+see 35 kWh instead, set the entity's display unit to kWh (entity settings →
+**Unit of measurement**).
 
 ## Options
 

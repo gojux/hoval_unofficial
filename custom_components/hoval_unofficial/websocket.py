@@ -1,9 +1,10 @@
-"""WebSocket command for the system diagram card (frontend/).
+"""WebSocket command for the system diagram card and the dashboard (frontend/).
 
 The card asks which components the integration found and which entity shows
 which value; it reads the values from the entities' states itself. Entities
 are looked up by unique ID, so renamed entities keep working, and disabled
-ones are left out.
+ones are left out. The dashboard strategy also gets all enabled entities of
+the entry by key.
 """
 from __future__ import annotations
 
@@ -85,7 +86,8 @@ def ws_schema(
 def build_schema(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     """What the card shows for an entry: the heat pump, the buffer(s), hot
     water and the heating circuits, each with the entity IDs of its values
-    (None for an entity that doesn't exist or is disabled)."""
+    (None for an entity that doesn't exist or is disabled). "entities" maps
+    the key of every enabled, visible entity of the entry to its entity ID."""
     registry = er.async_get(hass)
     options = entry.options
 
@@ -178,6 +180,7 @@ def build_schema(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
             }
         )
 
+    prefix = f"{entry.entry_id}_"
     return {
         "entry_id": entry.entry_id,
         "title": entry.title,
@@ -186,4 +189,11 @@ def build_schema(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         "hot_water": hot_water,
         "circuits": circuits,
         "smart_grid_status": sensor(SMART_GRID_STATUS_REGISTER.key),
+        "entities": {
+            reg_entry.unique_id.removeprefix(prefix): reg_entry.entity_id
+            for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id)
+            if not reg_entry.disabled
+            and not reg_entry.hidden
+            and reg_entry.unique_id.startswith(prefix)
+        },
     }

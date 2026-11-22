@@ -83,10 +83,12 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-# The system diagram card, served by the integration and loaded on every
-# dashboard, so it needs no resource of its own.
-CARD_URL = f"/{DOMAIN}/hoval-schema-card.js"
-CARD_PATH = Path(__file__).parent / "frontend" / "hoval-schema-card.js"
+# The system diagram card and the dashboard strategy, served by the
+# integration and loaded on every dashboard, so they need no resource of
+# their own.
+FRONTEND_URL = f"/{DOMAIN}"
+FRONTEND_PATH = Path(__file__).parent / "frontend"
+FRONTEND_SCRIPTS = ("hoval-schema-card.js", "hoval-dashboard-strategy.js")
 
 PLATFORMS: list[Platform] = [
     Platform.SENSOR,
@@ -99,13 +101,15 @@ PLATFORMS: list[Platform] = [
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Serves the system diagram card and its WebSocket command."""
+    """Serves the system diagram card, the dashboard strategy and their
+    WebSocket command."""
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(CARD_URL, str(CARD_PATH), cache_headers=False)]
+        [StaticPathConfig(FRONTEND_URL, str(FRONTEND_PATH), cache_headers=False)]
     )
-    # The version makes browsers load the card again after an update.
+    # The version makes browsers load the scripts again after an update.
     integration = await async_get_integration(hass, DOMAIN)
-    add_extra_js_url(hass, f"{CARD_URL}?v={integration.version}")
+    for script in FRONTEND_SCRIPTS:
+        add_extra_js_url(hass, f"{FRONTEND_URL}/{script}?v={integration.version}")
     async_register_websocket(hass)
     return True
 

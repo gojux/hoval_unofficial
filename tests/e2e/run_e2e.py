@@ -646,12 +646,15 @@ def check_reading_room_sensor(token: str, entry_id: str) -> None:
 
 
 def check_schema_card(token: str, entry_id: str) -> None:
-    """The system diagram card is served, and its WebSocket command lists the
-    components found with their entities."""
-    card_url = f"{HA_URL}/hoval_unofficial/hoval-schema-card.js"
-    with urllib.request.urlopen(card_url, timeout=30) as resp:
-        if b"hoval-schema-card" not in resp.read():
-            raise SystemExit("The card's script is not served")
+    """The system diagram card and the dashboard strategy are served, and
+    their WebSocket command lists the components found with their entities."""
+    for script, marker in (
+        ("hoval-schema-card.js", b"hoval-schema-card"),
+        ("hoval-dashboard-strategy.js", b"ll-strategy-dashboard-"),
+    ):
+        with urllib.request.urlopen(f"{HA_URL}/hoval_unofficial/{script}", timeout=30) as resp:
+            if marker not in resp.read():
+                raise SystemExit(f"The script {script} is not served")
     answer = ws_command(token, {"type": "hoval_unofficial/schema", "entry_id": entry_id})
     if not answer.get("success"):
         raise SystemExit(f"The schema command failed: {answer}")
@@ -664,10 +667,15 @@ def check_schema_card(token: str, entry_id: str) -> None:
         raise SystemExit(f"The schema lists a buffer that wasn't found: {schema['buffers']}")
     if not (schema["heat_pump"]["status"] or "").startswith("sensor."):
         raise SystemExit(f"The schema doesn't list the heat pump status: {schema['heat_pump']}")
+    entities = schema["entities"]
+    if entities.get("heating_circuit_1") != schema["circuits"][0]["climate"]:
+        raise SystemExit(f"The schema's entities don't list the first circuit: {entities}")
+    if "smart_grid_trigger" in entities:
+        raise SystemExit("The schema's entities list a disabled entity")
     unknown = ws_command(token, {"type": "hoval_unofficial/schema", "entry_id": "missing"})
     if unknown.get("success"):
         raise SystemExit("The schema command answered for an unknown entry")
-    print("OK: the system diagram card is served and its schema lists the components")
+    print("OK: the diagram card and the dashboard are served, the schema lists the components")
 
 
 def check_dhw_bottom_sensor(token: str, entry_id: str) -> None:
