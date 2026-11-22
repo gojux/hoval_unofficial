@@ -12,6 +12,7 @@
  */
 
 const CARD_TYPE = "hoval-schema-card";
+const EDITOR_TYPE = "hoval-schema-card-editor";
 // Starts within the last 24 hours, read from the long-term statistics.
 const STARTS_REFRESH_MS = 10 * 60 * 1000;
 
@@ -44,6 +45,12 @@ const TEXT = {
     starts: "Starts 24 h",
     gives_heat: "Gives off heat",
     not_found: "No loaded Hoval integration found.",
+    editor_title: "Title",
+    editor_title_helper: "Default: the name of the integration entry.",
+    editor_entry_id: "Installation",
+    editor_entry_id_helper: "Only needed with more than one Hoval installation; default: the first one.",
+    editor_show_buffer: "Show buffer without sensor",
+    editor_show_buffer_helper: "Draws a buffer without values if the installation has one without a buffer sensor (WPF or buffer module).",
   },
   de: {
     heat_pump: "Wärmepumpe",
@@ -73,6 +80,12 @@ const TEXT = {
     starts: "Starts 24 h",
     gives_heat: "Gibt Wärme ab",
     not_found: "Keine geladene Hoval-Integration gefunden.",
+    editor_title: "Titel",
+    editor_title_helper: "Standard: der Name des Integrationseintrags.",
+    editor_entry_id: "Anlage",
+    editor_entry_id_helper: "Nur bei mehreren Hoval-Anlagen nötig; Standard: die erste.",
+    editor_show_buffer: "Puffer ohne Fühler anzeigen",
+    editor_show_buffer_helper: "Zeichnet einen Puffer ohne Werte, wenn die Anlage einen Puffer ohne Pufferfühler (WPF oder Puffermodul) hat.",
   },
 };
 
@@ -117,6 +130,10 @@ class HovalSchemaCard extends HTMLElement {
     this.shadowRoot.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") this._onActivate(ev);
     });
+  }
+
+  static getConfigElement() {
+    return document.createElement(EDITOR_TYPE);
   }
 
   static getStubConfig() {
@@ -375,7 +392,8 @@ class HovalSchemaCard extends HTMLElement {
 
     const defrost = mode === "defrost";
     const hpColor = { heat: "hot", cool: "cold", dhw: "hot", defrost: "amber", idle: "idle" }[mode];
-    const hasBuffer = s.buffers.length > 0;
+    const buffers = this._buffers();
+    const hasBuffer = buffers.length > 0;
     const hasDhw = !!s.hot_water;
     const bufferFeed = ["heat", "cool", "defrost"].includes(mode);
     const dhwFeed = mode === "dhw";
@@ -406,16 +424,16 @@ class HovalSchemaCard extends HTMLElement {
     }
 
     let bufferSvg = "";
-    if (s.buffers.length === 1) {
-      const b = s.buffers[0];
+    if (buffers.length === 1) {
+      const b = buffers[0];
       add(`M${DIVERTER_X} ${FLOW_Y} H360`, "f", bufferFeed, hpColor);
       add(`M360 ${RETURN_Y} H${RETURN_JOIN_X}`, "r", bufferFeed, hpColor);
       add(`M456 ${FLOW_Y} H${FLOW_MANIFOLD_X}`, "f", anyOn, lineColor);
       add(`M${RETURN_MANIFOLD_X} ${RETURN_Y} H456`, "r", anyOn, lineColor);
       bufferSvg = this._singleBuffer(b, mode, defrost);
-    } else if (s.buffers.length === 2) {
-      const heating = s.buffers.find((b) => b.role === "heating_buffer") || s.buffers[0];
-      const cooling = s.buffers.find((b) => b.role === "cooling_buffer") || s.buffers[1];
+    } else if (buffers.length === 2) {
+      const heating = buffers.find((b) => b.role === "heating_buffer") || buffers[0];
+      const cooling = buffers.find((b) => b.role === "cooling_buffer") || buffers[1];
       const cooling_on = mode === "cool" || circuits.some((c) => c.on && c.action === "cooling");
       const heating_on = !cooling_on && (["heat", "defrost"].includes(mode) || circuits.some((c) => c.on));
       const heatColor = defrost ? "amber" : "hot";
@@ -509,6 +527,13 @@ class HovalSchemaCard extends HTMLElement {
     return svg;
   }
 
+  // The buffers to draw: the ones found, or, with the option "show_buffer",
+  // a buffer without values for an installation whose buffer has no sensor.
+  _buffers() {
+    if (this._schema.buffers.length || !(this._config && this._config.show_buffer)) return this._schema.buffers;
+    return [{ role: "buffer", top: null, bottom: null, middle: null, setpoint: null, sg_offset_heating: null, sg_offset_cooling: null }];
+  }
+
   _singleBuffer(b, mode, defrost) {
     const tint = mode === "idle" || mode === "dhw" ? "tank" : mode === "cool" ? "cold-tint" : defrost ? "amber-tint" : "hot-tint";
     const offset = mode === "cool" ? b.sg_offset_cooling : b.sg_offset_heating;
@@ -516,6 +541,10 @@ class HovalSchemaCard extends HTMLElement {
       `<defs><linearGradient id="hsc-buffer" x1="0" y1="0" x2="0" y2="1">` +
       `<stop offset="0" style="stop-color:var(--hsc-${tint})"/><stop offset="1" style="stop-color:var(--hsc-tank)"/></linearGradient></defs>` +
       `<rect class="tank" x="360" y="40" width="96" height="190" rx="24" fill="url(#hsc-buffer)"/>`;
+    if (!b.top && !b.bottom && !b.middle) {
+      svg += `<text class="title" x="408" y="140" text-anchor="middle">${esc(this._t("buffer"))}</text>`;
+      return svg;
+    }
     if (b.middle) {
       svg +=
         `<text class="title" x="408" y="120" text-anchor="middle">${esc(this._t("buffer"))}</text>` +
@@ -700,6 +729,56 @@ const STYLE = `
   .stat:hover b { text-decoration: underline; }
   .stat:focus-visible, .chip:focus-visible { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 2px; }
 `;
+
+// Card editor: a form instead of YAML in the dashboard's card dialog.
+const EDITOR_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "entry_id", selector: { config_entry: { integration: "hoval_unofficial" } } },
+  { name: "show_buffer", selector: { boolean: {} } },
+];
+
+class HovalSchemaCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  _t(key) {
+    const lang = (this._hass && this._hass.locale && this._hass.locale.language) || "en";
+    const table = TEXT[lang.split("-")[0]] || TEXT.en;
+    return table[key] || TEXT.en[key] || key;
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = (field) => this._t(`editor_${field.name}`);
+      this._form.computeHelper = (field) => this._t(`editor_${field.name}_helper`);
+      this._form.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        const config = { ...this._config, ...ev.detail.value };
+        // Unset options stay out of the YAML.
+        for (const key of ["title", "entry_id", "show_buffer"]) {
+          if (config[key] === "" || config[key] === undefined || config[key] === null || config[key] === false) delete config[key];
+        }
+        this._config = config;
+        this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+      });
+      this.appendChild(this._form);
+    }
+    this._form.hass = this._hass;
+    this._form.data = this._config;
+    this._form.schema = EDITOR_SCHEMA;
+  }
+}
+
+if (!customElements.get(EDITOR_TYPE)) customElements.define(EDITOR_TYPE, HovalSchemaCardEditor);
 
 if (!customElements.get(CARD_TYPE)) {
   customElements.define(CARD_TYPE, HovalSchemaCard);

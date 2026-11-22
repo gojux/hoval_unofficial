@@ -524,12 +524,20 @@ with **Add card → Hoval system diagram**, or in YAML:
 type: custom:hoval-schema-card
 ```
 
-Optional settings: `entry_id` (with more than one Hoval installation; by
-default the first one is shown) and `title`.
+The card's settings can be set in the card editor's form (or in YAML):
+
+- **Title** (`title`) — default: the name of the integration entry.
+- **Installation** (`entry_id`) — only needed with more than one Hoval
+  installation; by default the first one is shown.
+- **Show buffer without sensor** (`show_buffer: true`) — for an
+  installation with a buffer but without a buffer sensor: the buffer is
+  drawn without values, and the heating circuits are shown supplied from it
+  while the heat pump loads the hot water tank or defrosts.
 
 - Only components the integration found are drawn. A buffer is drawn only
   with a buffer sensor (WPF or a buffer module), since without one there is
-  no value to show; with a separate heating and cooling buffer, both.
+  no value to show, unless **Show buffer without sensor** is set; with a
+  separate heating and cooling buffer, both.
 - The lines show what runs: red while heating, blue while cooling, yellow
   while defrosting (the water of the buffer and the heating circuits gives
   off the heat for it), grey when idle. While the tank is loaded (heat pump
