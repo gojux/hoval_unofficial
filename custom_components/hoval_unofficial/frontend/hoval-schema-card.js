@@ -13,8 +13,8 @@
 
 const CARD_TYPE = "hoval-schema-card";
 const EDITOR_TYPE = "hoval-schema-card-editor";
-// Starts within the last 24 hours, read from the long-term statistics.
-const STARTS_REFRESH_MS = 10 * 60 * 1000;
+// How often the footer's 24-hour values are read from the long-term statistics.
+const CHANGES_REFRESH_MS = 10 * 60 * 1000;
 
 const TEXT = {
   en: {
@@ -42,7 +42,11 @@ const TEXT = {
     outdoor: "Outdoor temperature",
     power_input: "Power input",
     cop: "COP",
+    spf: "SPF",
     starts: "Starts 24 h",
+    heat: "Heat 24 h",
+    electricity: "Electricity 24 h",
+    runtime: "Runtime 24 h",
     gives_heat: "Gives off heat",
     not_found: "No loaded Hoval integration found.",
     editor_title: "Title",
@@ -51,6 +55,10 @@ const TEXT = {
     editor_entry_id_helper: "Only needed with more than one Hoval installation; default: the first one.",
     editor_show_buffer: "Show buffer without sensor",
     editor_show_buffer_helper: "Draws a buffer without values if the installation has one without a buffer sensor (WPF or buffer module).",
+    editor_footer: "Footer values",
+    editor_footer_helper: "The values over 24 hours come from the long-term statistics. A value whose entity is disabled is left out.",
+    editor_footer_entities: "Further entities in the footer",
+    editor_footer_entities_helper: "Shown after the values chosen above.",
   },
   de: {
     heat_pump: "Wärmepumpe",
@@ -77,7 +85,11 @@ const TEXT = {
     outdoor: "Außentemperatur",
     power_input: "Leistungsaufnahme",
     cop: "COP",
+    spf: "JAZ",
     starts: "Starts 24 h",
+    heat: "Wärme 24 h",
+    electricity: "Strom 24 h",
+    runtime: "Laufzeit 24 h",
     gives_heat: "Gibt Wärme ab",
     not_found: "Keine geladene Hoval-Integration gefunden.",
     editor_title: "Titel",
@@ -86,6 +98,10 @@ const TEXT = {
     editor_entry_id_helper: "Nur bei mehreren Hoval-Anlagen nötig; Standard: die erste.",
     editor_show_buffer: "Puffer ohne Fühler anzeigen",
     editor_show_buffer_helper: "Zeichnet einen Puffer ohne Werte, wenn die Anlage einen Puffer ohne Pufferfühler (WPF oder Puffermodul) hat.",
+    editor_footer: "Werte in der Fußzeile",
+    editor_footer_helper: "Die Werte über 24 Stunden stammen aus der Langzeitstatistik. Ein Wert, dessen Entität deaktiviert ist, entfällt.",
+    editor_footer_entities: "Weitere Entitäten in der Fußzeile",
+    editor_footer_entities_helper: "Stehen hinter den oben gewählten Werten.",
   },
 };
 
@@ -99,6 +115,30 @@ const MODE_BY_STATUS = {
 };
 const SMART_GRID_ACTIVE = ["preferred_operation", "forced_consumption"];
 const UNUSABLE = ["unavailable", "unknown", "", undefined, null];
+
+// Values the footer can show: a sensor's state or, with "change", what a
+// counter gained within the last 24 hours (from the long-term statistics,
+// converted to "units").
+const FOOTER_VALUES = {
+  outdoor: { entity: (s) => s.heat_pump.outdoor },
+  power_input: { entity: (s) => s.heat_pump.electrical_power, digits: 2 },
+  cop: { entity: (s) => s.heat_pump.cop },
+  spf: { entity: (s) => s.entities.seasonal_performance_factor },
+  starts: { entity: (s) => s.heat_pump.starts, change: { digits: 0 } },
+  heat: {
+    entity: (s) => s.entities.heat_quantity_heat_generator,
+    change: { units: { energy: "kWh" }, unit: "kWh", digits: 1 },
+  },
+  electricity: {
+    entity: (s) => s.entities.total_electrical_energy_heat_generator,
+    change: { units: { energy: "kWh" }, unit: "kWh", digits: 1 },
+  },
+  runtime: {
+    entity: (s) => s.entities.operating_hours_heat_generator,
+    change: { units: { duration: "h" }, unit: "h", digits: 0 },
+  },
+};
+const FOOTER_DEFAULT = ["outdoor", "power_input", "cop", "starts"];
 
 // Geometry of the diagram (SVG user units).
 const HP_RIGHT = 200;
@@ -123,8 +163,8 @@ class HovalSchemaCard extends HTMLElement {
     this._schema = null;
     this._error = null;
     this._loading = false;
-    this._starts = null;
-    this._startsTimer = null;
+    this._changes = {};
+    this._changesTimer = null;
     this._renderKey = null;
     this.shadowRoot.addEventListener("click", (ev) => this._onActivate(ev));
     this.shadowRoot.addEventListener("keydown", (ev) => {
@@ -143,6 +183,8 @@ class HovalSchemaCard extends HTMLElement {
   setConfig(config) {
     this._config = { ...config };
     this._schema = null;
+    this._changes = {};
+    this._stopChanges();
     this._renderKey = null;
   }
 
@@ -153,12 +195,11 @@ class HovalSchemaCard extends HTMLElement {
   }
 
   connectedCallback() {
-    if (this._schema && this._schema.heat_pump.starts) this._scheduleStarts();
+    if (this._schema) this._scheduleChanges();
   }
 
   disconnectedCallback() {
-    clearInterval(this._startsTimer);
-    this._startsTimer = null;
+    this._stopChanges();
   }
 
   getCardSize() {
@@ -177,7 +218,8 @@ class HovalSchemaCard extends HTMLElement {
       const msg = { type: "hoval_unofficial/schema" };
       if (this._config && this._config.entry_id) msg.entry_id = this._config.entry_id;
       this._schema = await this._hass.callWS(msg);
-      if (this._schema.heat_pump.starts) this._scheduleStarts();
+      this._schema.entities = this._schema.entities || {};
+      this._scheduleChanges();
     } catch (err) {
       this._error = err;
     }
@@ -186,24 +228,56 @@ class HovalSchemaCard extends HTMLElement {
     this._render();
   }
 
-  _scheduleStarts() {
-    if (this._startsTimer) return;
-    this._loadStarts();
-    this._startsTimer = setInterval(() => this._loadStarts(), STARTS_REFRESH_MS);
+  // The footer's values in their order: [key, definition, entity id].
+  _footerValues() {
+    const chosen = Array.isArray(this._config.footer) ? this._config.footer : FOOTER_DEFAULT;
+    return chosen
+      .filter((key) => Object.prototype.hasOwnProperty.call(FOOTER_VALUES, key))
+      .map((key) => [key, FOOTER_VALUES[key], FOOTER_VALUES[key].entity(this._schema)])
+      .filter(([, , entityId]) => entityId);
   }
 
-  async _loadStarts() {
-    try {
-      const result = await this._hass.callWS({
-        type: "recorder/statistic_during_period",
-        statistic_id: this._schema.heat_pump.starts,
-        rolling_window: { duration: { hours: 24 } },
-        types: ["change"],
-      });
-      this._starts = typeof result.change === "number" ? Math.round(result.change) : null;
-    } catch (err) {
-      this._starts = null;
-    }
+  _footerEntities() {
+    const ids = this._config.footer_entities;
+    return Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : [];
+  }
+
+  _scheduleChanges() {
+    if (this._changesTimer || !this._footerValues().some(([, def]) => def.change)) return;
+    this._loadChanges();
+    this._changesTimer = setInterval(() => this._loadChanges(), CHANGES_REFRESH_MS);
+  }
+
+  _stopChanges() {
+    clearInterval(this._changesTimer);
+    this._changesTimer = null;
+  }
+
+  async _loadChanges() {
+    const schema = this._schema;
+    const changes = {};
+    await Promise.all(
+      this._footerValues()
+        .filter(([, def]) => def.change)
+        .map(async ([key, def, entityId]) => {
+          try {
+            const msg = {
+              type: "recorder/statistic_during_period",
+              statistic_id: entityId,
+              rolling_window: { duration: { hours: 24 } },
+              types: ["change"],
+            };
+            if (def.change.units) msg.units = def.change.units;
+            const result = await this._hass.callWS(msg);
+            changes[key] = typeof result.change === "number" ? result.change : null;
+          } catch (err) {
+            changes[key] = null;
+          }
+        })
+    );
+    // The configuration changed while the statistics were read.
+    if (schema !== this._schema) return;
+    this._changes = changes;
     this._renderKey = null;
     this._render();
   }
@@ -251,6 +325,15 @@ class HovalSchemaCard extends HTMLElement {
     const st = this._usable(entityId);
     if (!st) return undefined;
     return this._hass.formatEntityState ? this._hass.formatEntityState(st) : st.state;
+  }
+
+  // An entity's name without its device's name in front.
+  _entityName(entityId) {
+    const name = this._hass.states[entityId].attributes.friendly_name || entityId;
+    const entry = this._hass.entities && this._hass.entities[entityId];
+    const device = entry && entry.device_id && this._hass.devices && this._hass.devices[entry.device_id];
+    const deviceName = device && (device.name_by_user || device.name);
+    return deviceName && name.startsWith(`${deviceName} `) ? name.slice(deviceName.length + 1) : name;
   }
 
   _onActivate(ev) {
@@ -336,7 +419,8 @@ class HovalSchemaCard extends HTMLElement {
 
   _relevantEntities() {
     const s = this._schema;
-    const ids = [...Object.values(s.heat_pump), s.smart_grid_status];
+    const ids = [...Object.values(s.heat_pump), s.smart_grid_status, ...this._footerEntities()];
+    for (const [, , entityId] of this._footerValues()) ids.push(entityId);
     for (const b of s.buffers) ids.push(b.top, b.bottom, b.middle, b.sg_offset_heating, b.sg_offset_cooling);
     if (s.hot_water) ids.push(s.hot_water.water_heater, s.hot_water.bottom, s.hot_water.sg_offset);
     for (const c of s.circuits) ids.push(c.climate, c.flow, c.flow_target, c.status, c.sg_offset_heating, c.sg_offset_cooling);
@@ -353,7 +437,7 @@ class HovalSchemaCard extends HTMLElement {
     // Only redraw when a shown state changed, so the flow animation keeps running.
     const key = JSON.stringify([
       this._hass.locale && this._hass.locale.language,
-      this._starts,
+      this._changes,
       this._relevantEntities().map((id) => {
         const st = this._hass.states[id];
         return st ? [st.state, st.attributes.current_temperature, st.attributes.temperature, st.attributes.hvac_action] : null;
@@ -503,7 +587,7 @@ class HovalSchemaCard extends HTMLElement {
           <text class="small" x="204" y="176">${esc(this._t("return_short"))}</text>
         </svg>
       </div>
-      ${this._footer(hp)}`;
+      ${this._footer()}`;
   }
 
   _heatPump(hp, mode, color, statusState) {
@@ -652,18 +736,25 @@ class HovalSchemaCard extends HTMLElement {
     );
   }
 
-  _footer(hp) {
+  _footer() {
     const stat = (label, value, entityId) =>
-      entityId
-        ? `<div class="stat spot" tabindex="0" role="button" data-entity="${esc(entityId)}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`
-        : "";
-    const starts = this._starts === null ? "—" : String(this._starts);
-    return `<div class="foot">
-      ${stat(this._t("outdoor"), this._value(hp.outdoor), hp.outdoor)}
-      ${stat(this._t("power_input"), this._value(hp.electrical_power, 2), hp.electrical_power)}
-      ${stat(this._t("cop"), this._value(hp.cop), hp.cop)}
-      ${stat(this._t("starts"), starts, hp.starts)}
-    </div>`;
+      `<div class="stat spot" tabindex="0" role="button" data-entity="${esc(entityId)}"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
+    const stats = this._footerValues().map(([key, def, entityId]) => {
+      if (!def.change) return stat(this._t(key), this._value(entityId, def.digits), entityId);
+      const change = this._changes[key];
+      let value = "—";
+      if (typeof change === "number") {
+        value = this._num(change, def.change.digits);
+        if (def.change.unit) value += ` ${def.change.unit}`;
+      }
+      return stat(this._t(key), value, entityId);
+    });
+    for (const entityId of this._footerEntities()) {
+      const st = this._state(entityId);
+      if (!st) continue;
+      stats.push(stat(this._entityName(entityId), this._formatState(entityId) || "—", entityId));
+    }
+    return stats.length ? `<div class="foot">${stats.join("")}</div>` : "";
   }
 }
 
@@ -731,10 +822,22 @@ const STYLE = `
 `;
 
 // Card editor: a form instead of YAML in the dashboard's card dialog.
-const EDITOR_SCHEMA = [
+const editorSchema = (t) => [
   { name: "title", selector: { text: {} } },
   { name: "entry_id", selector: { config_entry: { integration: "hoval_unofficial" } } },
   { name: "show_buffer", selector: { boolean: {} } },
+  {
+    name: "footer",
+    selector: {
+      select: {
+        multiple: true,
+        reorder: true,
+        mode: "dropdown",
+        options: Object.keys(FOOTER_VALUES).map((key) => ({ value: key, label: t(key) })),
+      },
+    },
+  },
+  { name: "footer_entities", selector: { entity: { multiple: true } } },
 ];
 
 class HovalSchemaCardEditor extends HTMLElement {
@@ -767,14 +870,20 @@ class HovalSchemaCardEditor extends HTMLElement {
         for (const key of ["title", "entry_id", "show_buffer"]) {
           if (config[key] === "" || config[key] === undefined || config[key] === null || config[key] === false) delete config[key];
         }
+        if (!Array.isArray(config.footer) || config.footer.join() === FOOTER_DEFAULT.join()) delete config.footer;
+        if (!Array.isArray(config.footer_entities) || !config.footer_entities.length) delete config.footer_entities;
         this._config = config;
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
       });
       this.appendChild(this._form);
     }
     this._form.hass = this._hass;
-    this._form.data = this._config;
-    this._form.schema = EDITOR_SCHEMA;
+    this._form.data = { footer: FOOTER_DEFAULT, ...this._config };
+    const lang = this._hass.locale && this._hass.locale.language;
+    if (lang !== this._schemaLang) {
+      this._schemaLang = lang;
+      this._form.schema = editorSchema((key) => this._t(key));
+    }
   }
 }
 

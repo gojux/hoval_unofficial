@@ -19,7 +19,22 @@ Setup is done entirely through the Home Assistant UI — no YAML required.
 
 The included [system diagram card](#system-diagram-card) shows your
 installation at a glance: which components there are, what is running, and
-which value belongs where (example values).
+which value belongs where (example values). The included
+[Hoval dashboard](#hoval-dashboard) adds history, energy and settings
+views around it.
+
+**Contents**
+
+- [Requirements](#requirements) · [Installation](#installation) ·
+  [What you get](#what-you-get) · [Buffer sensors](#buffer-sensors)
+- [Using the heating circuits](#using-the-heating-circuits-climate-entities)
+  · [Experimental functions](#experimental-functions)
+- [Using domestic hot water](#using-domestic-hot-water-water_heater-entity)
+  · [Using Smart Grid control](#using-smart-grid-control)
+- [System diagram card](#system-diagram-card) ·
+  [Hoval dashboard](#hoval-dashboard)
+- [Options](#options) · [Troubleshooting](#troubleshooting) ·
+  [Developer documentation](#developer-documentation)
 
 ## Disclaimer
 
@@ -33,10 +48,6 @@ liability** for any damage, data loss, equipment malfunction, or other
 harm resulting from the use of this integration, including but not
 limited to unintended interaction with your heat pump's Modbus
 interface.
-
-For architecture details, implementation notes, and instructions on
-adapting this integration to a different heat pump model, see
-[DEVELOPER.md](DEVELOPER.md).
 
 ## Requirements
 
@@ -91,28 +102,17 @@ entry's three-dot menu → **Reconfigure**.
   thermostats, history, energy and settings, built from what the
   integration found; see [Hoval dashboard](#hoval-dashboard).
 - **Sensors** — outdoor temperature, flow/return temperatures, heat
-  quantities, operating hours, COP, seasonal performance factor (SPF), and
-  a translated status sensor
-  (shows the controller's current status as readable text in your HA
-  language, e.g. "Heating mode" / "Defrost" / "Frost protection").
-  The controller's error code is shown as text too ("No error" or the
-  warning number, e.g. "W11"). Two diagnostic sensors per heating circuit
-  show its control strategy (e.g. "Weather-compensated with room
-  influence") and its current status (e.g. "Normal heating" or "Smart Grid
-  preferred operation, heating"); both disabled by default. The heat
-  pump's flow rate and the speed of its circulation pump are available as
-  sensors too, also disabled by default; they help to check the hydraulics,
-  e.g. whether a heating circuit pumps more water than the heat pump.
-  Buffer temperatures: **Buffer temperature WPF** for the heat pump's own
-  buffer sensor, and for a buffer module (PS, UnitId 142 or 143) its two
-  buffer sensors **Buffer temperature top / bottom** and its **Buffer
-  setpoint**. Each only if the integration finds it: when it is set up and
-  whenever the experimental functions are opened. A buffer sensor of a
-  found module that shows no value (e.g. a heating buffer with only the top
-  sensor) is created disabled, so you can still enable it. With both buffer
-  modules, the heat pump has a separate heating buffer (143) and cooling
-  buffer (142), and the entities are named **Heating buffer …** and
-  **Cooling buffer …**.
+  quantities, operating hours, COP, seasonal performance factor (SPF), the
+  controller's status as readable text in your HA language (e.g. "Heating
+  mode" / "Defrost" / "Frost protection") and its error code ("No error" or
+  the warning number, e.g. "W11"). Buffer temperatures where a buffer
+  sensor is found, see [Buffer sensors](#buffer-sensors).
+- **Diagnostic sensors**, disabled by default — per heating circuit its
+  control strategy (e.g. "Weather-compensated with room influence") and its
+  current status (e.g. "Normal heating" or "Smart Grid preferred operation,
+  heating"); the heat pump's flow rate and the speed of its circulation
+  pump, which help to check the hydraulics, e.g. whether a heating circuit
+  pumps more water than the heat pump.
 - **Domestic hot water (DHW)** — a `water_heater` entity showing tank
   temperature, target temperature, and operating mode. A tank with a second
   sensor at the bottom (SF2) also gets the sensor **Hot water temperature
@@ -136,6 +136,22 @@ A value set on a `number` entity is shown right away; its `change_pending`
 attribute is `true` until the next poll reads it back from the controller. If
 the controller doesn't report it within 90 seconds, the value it reports is
 shown again.
+
+## Buffer sensors
+
+Which buffer sensors there are depends on the installation:
+
+- **Buffer temperature WPF** — the heat pump's own buffer sensor.
+- **Buffer temperature top / bottom** and **Buffer setpoint** — the two
+  buffer sensors and the setpoint of a buffer module (PS, UnitId 142 or
+  143).
+
+Each only if the integration finds it: when it is set up and whenever the
+experimental functions are opened. A buffer sensor of a found module that
+shows no value (e.g. a heating buffer with only the top sensor) is created
+disabled, so you can still enable it. With both buffer modules, the heat
+pump has a separate heating buffer (143) and cooling buffer (142), and the
+entities are named **Heating buffer …** and **Cooling buffer …**.
 
 ## Using the heating circuits (climate entities)
 
@@ -508,8 +524,10 @@ effect:
 - cooling of heating circuit 1–3: always (every strategy can cool);
 - buffer heating / cooling: per buffer module (PS, UnitId 142 or 143), only
   while that module is found; with a separate heating and cooling buffer,
-  for both. Set **Smart Grid control** back to **Normal
-operation** to return to normal operation.
+  for both.
+
+Set **Smart Grid control** back to **Normal operation** to return to normal
+operation.
 
 Whether Smart Grid needs to be pre-configured by your installer or Hoval's
 service depends on the installation — some systems accept these registers
@@ -527,6 +545,8 @@ with **Add card → Hoval system diagram**, or in YAML:
 type: custom:hoval-schema-card
 ```
 
+### Settings
+
 The card's settings can be set in the card editor's form (or in YAML):
 
 - **Title** (`title`) — default: the name of the integration entry.
@@ -536,6 +556,30 @@ The card's settings can be set in the card editor's form (or in YAML):
   installation with a buffer but without a buffer sensor: the buffer is
   drawn without values, and the heating circuits are shown supplied from it
   while the heat pump loads the hot water tank or defrosts.
+- **Footer values** (`footer`) — which values the footer shows, in this
+  order. Default: `outdoor` (outdoor temperature), `power_input`, `cop` and
+  `starts` (compressor starts within the last 24 hours). Also available:
+  `spf` (seasonal performance factor) and, each within the last 24 hours,
+  `heat` (heat quantity), `electricity` (electrical energy) and `runtime`
+  (operating hours). The values within the last 24 hours come from the
+  long-term statistics, which are updated hourly. A value whose entity is
+  disabled is left out; an empty list leaves the footer out.
+- **Further entities in the footer** (`footer_entities`) — any other
+  entities, shown after these values.
+
+```yaml
+type: custom:hoval-schema-card
+footer:
+  - outdoor
+  - cop
+  - spf
+  - heat
+  - electricity
+footer_entities:
+  - sensor.electricity_price
+```
+
+### What it shows
 
 - Only components the integration found are drawn. A buffer is drawn only
   with a buffer sensor (WPF or a buffer module), since without one there is
@@ -549,8 +593,6 @@ The card's settings can be set in the card editor's form (or in YAML):
   tank with two sensors shows its target once for the tank: loading starts
   when the top sensor falls below it and ends when the bottom sensor
   reaches it. Clicking a value opens its more-info dialog with the history.
-- The footer shows outdoor temperature, power input, COP and the compressor
-  starts within the last 24 hours (from the long-term statistics).
 - While Smart Grid is in preferred operation or forced consumption, a
   green badge shows each Smart Grid offset other than 0 at its component,
   and the card's header shows the Smart Grid mode; without such an offset,
@@ -679,6 +721,12 @@ heat pump's Modbus interface, restrict access to it with firewall rules
 (e.g. only allow your Home Assistant server's IP) so it doesn't become an
 open, unauthenticated gateway to your heat pump's Modbus interface for
 anyone else on your network.
+
+## Developer documentation
+
+For architecture details, implementation notes, and instructions on
+adapting this integration to a different heat pump model, see
+[DEVELOPER.md](DEVELOPER.md).
 
 ## Acknowledgements
 
