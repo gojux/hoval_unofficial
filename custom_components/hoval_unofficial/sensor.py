@@ -35,10 +35,11 @@ from .const import (
     HeatingCircuit,
     SENSOR_REGISTERS,
     RegisterDef,
-    HEAT_PUMP_STATUS_MAP,
     HEAT_PUMP_STATUS_OPTIONS,
     HEAT_PUMP_STATUS_REGISTER,
-    HEAT_PUMP_STATUS_UNKNOWN,
+    METER_SENSOR_KEYS,
+    heat_pump_status,
+    meters_present,
     SMART_GRID_STATUS_MAP,
     SMART_GRID_STATUS_OPTIONS,
     SMART_GRID_STATUS_REGISTER,
@@ -72,18 +73,18 @@ async def async_setup_entry(
         absent.add(BUFFER_SENSOR_REGISTER.key)
 
     cooling = cooling_enabled(entry.options)
+    meters = meters_present(entry.options)
+
+    def enabled(reg: RegisterDef) -> bool | None:
+        # Without energy meters, their sensors only read 0.
+        if not meters and reg.key in METER_SENSOR_KEYS:
+            return False
+        if (cooling and reg.key in COOLING_SENSOR_KEYS) or reg is BUFFER_SENSOR_REGISTER:
+            return True
+        return None
+
     entities: list[SensorEntity] = [
-        HovalSensor(
-            coordinator,
-            entry,
-            reg,
-            enabled=(
-                True
-                if (cooling and reg.key in COOLING_SENSOR_KEYS)
-                or reg is BUFFER_SENSOR_REGISTER
-                else None
-            ),
-        )
+        HovalSensor(coordinator, entry, reg, enabled=enabled(reg))
         for reg in SENSOR_REGISTERS
         if reg.key not in absent
     ]
@@ -175,7 +176,8 @@ class HovalStatusSensor(
     list of every possible state value for this device class, and raises an
     error if the returned value isn't one of them -- that's why
     HEAT_PUMP_STATUS_UNKNOWN is included as a fallback for undocumented
-    codes.
+    codes. The codes' meaning depends on the heat pump's controller (see
+    CONF_HEAT_PUMP_CONTROLLER); the options cover both.
 
     The entity's state is a stable, machine-readable key (e.g. "heating_mode"),
     not display text -- the actual English/German label is resolved by Home
@@ -193,6 +195,7 @@ class HovalStatusSensor(
         self, coordinator: HovalModbusCoordinator, entry: ConfigEntry
     ) -> None:
         super().__init__(coordinator, context=[HEAT_PUMP_STATUS_REGISTER.key])
+        self._options = entry.options
         self._attr_unique_id = f"{entry.entry_id}_heat_pump_status"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -203,10 +206,9 @@ class HovalStatusSensor(
 
     @property
     def native_value(self) -> str | None:
-        raw_code = self.coordinator.data.get(HEAT_PUMP_STATUS_REGISTER.key)
-        if raw_code is None:
-            return None
-        return HEAT_PUMP_STATUS_MAP.get(int(raw_code), HEAT_PUMP_STATUS_UNKNOWN)
+        return heat_pump_status(
+            self._options, self.coordinator.data.get(HEAT_PUMP_STATUS_REGISTER.key)
+        )
 
     @property
     def extra_state_attributes(self) -> dict[str, int] | None:

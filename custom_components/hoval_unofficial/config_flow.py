@@ -26,6 +26,7 @@ from .const import (
     CONF_BUFFER_MODULE,
     CONF_DEVICE_ID,
     CONF_DHW_PRESENT,
+    CONF_HEAT_PUMP_CONTROLLER,
     CONF_EXPERIMENTAL_CONSTANT_CONTROL,
     CONF_EXPERIMENTAL_COOLING,
     CONF_EXPERIMENTAL_FLOW_SETPOINT_RAISE,
@@ -56,6 +57,8 @@ from .const import (
     HEATING_CIRCUIT_2,
     HEATING_CIRCUIT_3,
     HEATING_CIRCUITS,
+    HEAT_PUMP_CONTROLLER_WFA,
+    HEAT_PUMP_CONTROLLERS,
     HeatingCircuit,
     MAX_SCAN_INTERVAL,
     MAX_TIMEOUT,
@@ -73,6 +76,8 @@ from .const import (
     current_temp_source_key,
     flow_setpoint_raise_bound_keys,
     flow_setpoint_raise_bounds,
+    heat_pump_controller,
+    meters_present,
     previous_strategy_key,
     room_influence_enabled,
 )
@@ -80,8 +85,10 @@ from . import (
     async_read_buffers,
     async_read_circuit_options,
     async_read_dhw_bottom_sensor,
+    async_suggest_heat_pump_controller,
+    update_meter_sensors,
 )
-from .coordinator import HovalModbusCoordinator, timeout_supported
+from .coordinator import HovalModbusCoordinator, read_register, timeout_supported
 from .raise_control import async_sync_flow_setpoint_raise
 from .room_temp import has_room_sensor, parse_room_temperature
 
@@ -124,6 +131,32 @@ STEP_RECONFIGURE_DATA_SCHEMA = vol.Schema(
 )
 
 
+CONTROLLER_SELECTOR = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=HEAT_PUMP_CONTROLLERS,
+        mode=selector.SelectSelectorMode.LIST,
+        translation_key=CONF_HEAT_PUMP_CONTROLLER,
+    )
+)
+
+
+async def suggest_controller(
+    hass: HomeAssistant, host: str, port: int, device_id: int
+) -> str:
+    """The heat pump's controller suggested by its meters; WFA if they
+    can't be read."""
+    try:
+        async with modbus.async_get_temporary_unit(
+            hass, ModbusTcpParams(host=host, port=port), device_id
+        ) as unit:
+            return await async_suggest_heat_pump_controller(
+                lambda reg: read_register(unit, reg)
+            )
+    except ModbusError as err:
+        _LOGGER.debug("Reading the energy meters failed: %s", err)
+        return HEAT_PUMP_CONTROLLER_WFA
+
+
 async def test_connection(
     hass: HomeAssistant, host: str, port: int, device_id: int
 ) -> bool:
@@ -156,6 +189,10 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
     MINOR_VERSION = 1
 
+    def __init__(self) -> None:
+        self._data: dict[str, Any] = {}
+        self._suggested_controller = HEAT_PUMP_CONTROLLER_WFA
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -176,15 +213,37 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not connection_ok:
                 errors["base"] = "cannot_connect"
             else:
-                return self.async_create_entry(
-                    title=name,
-                    data=user_input,
+                self._data = user_input
+                self._suggested_controller = await suggest_controller(
+                    self.hass, host, port, device_id
                 )
+                return await self.async_step_controller()
 
         return self.async_show_form(
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
+        )
+
+    async def async_step_controller(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Asks for the heat pump's controller, which no register tells."""
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._data[CONF_NAME],
+                data=self._data,
+                options={CONF_HEAT_PUMP_CONTROLLER: user_input[CONF_HEAT_PUMP_CONTROLLER]},
+            )
+        return self.async_show_form(
+            step_id="controller",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_HEAT_PUMP_CONTROLLER, default=self._suggested_controller
+                    ): CONTROLLER_SELECTOR
+                }
+            ),
         )
 
     async def async_step_reconfigure(
@@ -507,6 +566,12 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
             ]
             if not sending:
                 await self._async_detect_dhw_bottom_sensor(options)
+                if heat_pump_controller(options) != heat_pump_controller(
+                    self.config_entry.options
+                ):
+                    update_meter_sensors(
+                        self.hass, self.config_entry, meters_present(options)
+                    )
                 return self.async_create_entry(title="", data=options)
             errors["base"] = "room_influence_sending"
             placeholders["circuits"] = _circuit_numbers(sending)
@@ -554,6 +619,11 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
                     )
                 ] = bool
         schema[vol.Required(CONF_DHW_PRESENT, default=dhw_present(options))] = bool
+        schema[
+            vol.Required(
+                CONF_HEAT_PUMP_CONTROLLER, default=heat_pump_controller(options)
+            )
+        ] = CONTROLLER_SELECTOR
         return self.async_show_form(
             step_id="general",
             data_schema=vol.Schema(schema),

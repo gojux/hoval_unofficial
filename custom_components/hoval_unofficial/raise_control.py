@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DOMAIN,
     FLOW_SETPOINT_RAISE_REGISTERS,
+    HEAT_PUMP_STATUS_HEATING,
     HEAT_PUMP_STATUS_REGISTER,
     HEATING_CIRCUIT_1,
     HEATING_CIRCUITS,
@@ -29,6 +30,7 @@ from .const import (
     flow_setpoint_raise_bounds,
     flow_setpoint_raise_offered,
     flow_setpoint_raise_previous_key,
+    heat_pump_status,
 )
 from .coordinator import HovalModbusCoordinator
 from .flow_setpoint_raise import (
@@ -125,7 +127,10 @@ class FlowSetpointRaiseControl:
         current = data.get(RAISE_REGISTER.key)
         self.suggestion = self._advisor.update(
             now,
-            data.get(HEAT_PUMP_STATUS_REGISTER.key),
+            heat_pump_status(
+                self._entry.options, data.get(HEAT_PUMP_STATUS_REGISTER.key)
+            )
+            == HEAT_PUMP_STATUS_HEATING,
             data.get("outdoor_temp"),
             current,
             data.get("modulation"),

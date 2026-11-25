@@ -12,6 +12,13 @@
           "scan_interval": "Polling interval (seconds)"
         }
       },
+      "controller": {
+        "title": "Heat pump controller",
+        "description": "The heat pump's own controller decides what its status codes mean and whether it has energy meters. No register tells them apart; the suggestion is based on the energy meters. Can be changed later under Options -> General.",
+        "data": {
+          "heat_pump_controller": "Heat pump controller"
+        }
+      },
       "reconfigure": {
         "title": "Update Heat Pump connection",
         "description": "Update the name and connection details of the heat pump controller.",
@@ -52,7 +59,8 @@
           "message_spacing": "Gap between Modbus requests (milliseconds)",
           "heating_circuit_2_present": "Heating circuit 2 present",
           "heating_circuit_3_present": "Heating circuit 3 present",
-          "dhw_present": "Domestic hot water present"
+          "dhw_present": "Domestic hot water present",
+          "heat_pump_controller": "Heat pump controller"
         },
         "data_description": {
           "scan_interval": "20 seconds or less recommended: the Hoval gateway drops connections that are idle for longer, and every poll after that takes several seconds longer.",
@@ -60,7 +68,8 @@
           "message_spacing": "Default: 0 (no gap). Can help if the gateway sometimes doesn't answer requests sent right after each other. Applies to all requests to this device ID over the shared connection, also those of other integrations, and makes each poll take longer.",
           "heating_circuit_2_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
           "heating_circuit_3_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
-          "dhw_present": "Without it, the integration neither creates its entities nor reads or writes its values. Saving also looks for a second sensor at the bottom of the hot water tank, e.g. one fitted later."
+          "dhw_present": "Without it, the integration neither creates its entities nor reads or writes its values. Saving also looks for a second sensor at the bottom of the hot water tank, e.g. one fitted later.",
+          "heat_pump_controller": "Decides what the heat pump's status codes mean. Without energy meters (ECR461), the sensors for energy, power, COP and SPF are disabled; switching back enables them again."
         }
       },
       "circuit": {
@@ -134,6 +143,12 @@
         "modbus": "Read the controller's room sensor",
         "entity": "Home Assistant entity, display in widget only",
         "entity_write": "Home Assistant entity, send to the controller"
+      }
+    },
+    "heat_pump_controller": {
+      "options": {
+        "wfa": "WFA (e.g. Belaria)",
+        "ecr461": "ECR461 (e.g. Thermalia, no energy meters)"
       }
     }
   },
@@ -357,6 +372,45 @@
           "preheat_compressor_oil": "Preheat compressor oil",
           "cold_start": "Cold start",
           "machine_not_configured": "Machine not configured",
+          "electrical_power_limitation": "Electrical power limitation",
+          "free_cooling": "Free cooling",
+          "evaporator_temp_too_low": "Evaporator temperature too low",
+          "stage_2_delay": "Stage 2 delay",
+          "safety_chain_fault": "Safety chain fault",
+          "heat_source_fault": "Heat source fault",
+          "delay_15s": "15 s delay",
+          "active_cooling_passive_cooling_dhw": "Active cooling and passive cooling DHW",
+          "frost_risk": "HP frost risk",
+          "condenser_frost_protection": "Condenser frost protection",
+          "pool_charging": "Pool charging",
+          "condenser_frost_warning": "Condenser frost warning",
+          "hot_gas_fault": "Hot gas fault",
+          "primary_venting": "Primary circuit venting",
+          "auxiliary_heating_only": "Auxiliary heating only",
+          "no_differential_pressure": "No differential pressure",
+          "dhw_auxiliary_heating_only": "DHW with auxiliary heating only",
+          "evaporator_sensor_fault": "Evaporator sensor faulty",
+          "ecm35x_fault": "ECM35x fault",
+          "synchronisation": "Synchronisation",
+          "crankcase_heating": "Crankcase heating",
+          "condenser_flow_fault": "Condenser circuit flow fault",
+          "groundwater_flushing": "Groundwater flushing time",
+          "groundwater_pump_lead_time": "Groundwater pump lead time",
+          "groundwater_pump_run_on_time": "Groundwater pump run-on time",
+          "primary_min_pressure_fault": "Primary circuit min. pressure fault",
+          "primary_max_pressure_fault": "Primary circuit max. pressure fault",
+          "condenser_min_pressure_fault": "Condenser circuit min. pressure fault",
+          "condenser_max_pressure_fault": "Condenser circuit max. pressure fault",
+          "primary_max_limiter_cooling": "Primary circuit max. limiter cooling",
+          "primary_cooling_lock_time": "Primary circuit cooling lock time",
+          "supply_air_charging": "Supply air charging",
+          "hd_sensor_fault": "HD fault (sensor)",
+          "starting_current_limiter_fault": "Starting current limiter fault",
+          "phase_converter_fault": "Phase converter fault",
+          "primary_flow_fault": "Primary circuit flow fault",
+          "hp_return_sensor_fault": "HP return sensor faulty",
+          "outputs_inactive": "Outputs inactive",
+          "flow_return_sensor_calibration": "HP flow/return sensor calibration",
           "unknown_status": "Unknown status"
         }
       },

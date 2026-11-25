@@ -254,7 +254,7 @@ Weather-compensated cooling (strategy 0/1/2, `weather_cooling_possible`): the
 controller switches between heating and cooling by the outdoor temperature
 and then uses the cooling room setpoints
 (`write_normal_cooling_setpoint_reg` / `write_eco_cooling_setpoint_reg`,
-gateway 2.39+, polled by the climate entity of such a circuit). No register
+gateway firmware 2.39+, polled by the climate entity of such a circuit). No register
 tells whether an installation does this; `HovalRoomClimate` goes by the
 circuit's status (`status_reg`, `HEATING_CIRCUIT_STATUS_COOLING`), polled for
 `hvac_action`. While it shows cooling, the mode stays as it is, the target
@@ -274,8 +274,32 @@ drops a remembered raise of a circuit that isn't there without writing.
 `_async_detect_present` in `__init__.py` fills missing options from the
 entity registry (a circuit with an enabled entity) or by reading the flow
 temperature / hot water temperature directly (other than 0); hot water is
-always present for an entry that already had options. An option whose
-register isn't answered stays missing and is detected on the next start.
+always present for an entry that already had options (other than the
+heat pump controller, which is stored when the entry is created). An
+option whose register isn't answered stays missing and is detected on the
+next start.
+
+## Heat pump controller (WFA / ECR461)
+
+Option `heat_pump_controller` (`heat_pump_controller()`, default WFA). The
+codes in 1539 depend on it: `HEAT_PUMP_STATUS_MAPS` holds one map per
+controller, with the same key for the same meaning, so the status sensor,
+the system diagram card (`MODE_BY_STATUS`; a key ending in `_fault` shows
+the status in red) and the raise learning
+(`HEAT_PUMP_STATUS_HEATING`) only look at keys, never at raw codes; use
+`heat_pump_status()`. The ECR461 has no energy meters: `meters_present()`
+is false and the sensors in `METER_SENSOR_KEYS` are created disabled.
+The schema WebSocket command reports it as `meters`; the card then uses
+`FOOTER_DEFAULT_WITHOUT_METERS` as the footer's default.
+No register tells the controllers apart; `suggest_heat_pump_controller`
+suggests ECR461 when the operating hours aren't 0 but heat quantity (1505)
+and electrical energy (25613) are. It is asked in the config flow's
+`controller` step (read through a temporary Modbus unit), stored at the
+first start for older entries, and changed under Options -> General.
+`update_meter_sensors` runs only when the value is set or changed:
+switching to ECR461 disables the enabled meter sensors, switching to WFA
+enables those disabled by the integration that are enabled by default, so
+a sensor the user enabled again stays enabled.
 
 Every platform adds its entities through `coordinator.add_entities`, which
 remembers their unique IDs; after the platforms are set up,

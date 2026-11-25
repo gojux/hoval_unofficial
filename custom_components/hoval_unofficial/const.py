@@ -822,7 +822,7 @@ class HeatingCircuit:
     # Room setpoints while the circuit cools weather compensated (strategy
     # 0/1/2): the controller switches between heating and cooling by the
     # outdoor temperature and then uses these instead of the heating ones.
-    # Gateway software 2.39 and later.
+    # Gateway firmware 2.39 and later.
     write_normal_cooling_setpoint_reg: RegisterDef
     write_eco_cooling_setpoint_reg: RegisterDef
 
@@ -1547,9 +1547,38 @@ CONTROLLER_ERROR_OPTIONS: list[str] = [
     CONTROLLER_ERROR_UNKNOWN,
 ]
 
-# Raw status code -> stable, machine-readable key (English, snake_case).
-# This dict is the single source of truth for which codes exist; the actual
-# displayed text lives in strings.json / translations/de.json.
+# The heat pump's own controller, which decides the meaning of the status
+# codes in 1539 and whether energy meters are there: WFA (e.g. Belaria) or
+# ECR461 (e.g. Thermalia). No register tells them apart; chosen when the
+# entry is set up and under Options -> General, suggested by
+# suggest_heat_pump_controller.
+CONF_HEAT_PUMP_CONTROLLER = "heat_pump_controller"
+HEAT_PUMP_CONTROLLER_WFA = "wfa"
+HEAT_PUMP_CONTROLLER_ECR461 = "ecr461"
+HEAT_PUMP_CONTROLLERS: list[str] = [HEAT_PUMP_CONTROLLER_WFA, HEAT_PUMP_CONTROLLER_ECR461]
+
+
+def heat_pump_controller(options: Mapping[str, Any]) -> str:
+    """The heat pump's controller; WFA unless set otherwise."""
+    return options.get(CONF_HEAT_PUMP_CONTROLLER, HEAT_PUMP_CONTROLLER_WFA)
+
+
+def suggest_heat_pump_controller(
+    operating_hours: float | None,
+    heat_quantity: float | None,
+    electrical_energy: float | None,
+) -> str:
+    """ECR461 if the heat pump has run but both energy meters read 0, as the
+    ECR461 has no meters; WFA otherwise."""
+    if operating_hours and heat_quantity == 0 and electrical_energy == 0:
+        return HEAT_PUMP_CONTROLLER_ECR461
+    return HEAT_PUMP_CONTROLLER_WFA
+
+
+# Raw status code -> stable, machine-readable key (English, snake_case), per
+# controller. A code with the same meaning has the same key on both, so
+# automations and the system diagram card work with either. The displayed
+# text lives in strings.json / translations/de.json.
 HEAT_PUMP_STATUS_MAP: dict[int, str] = {
     0: "switched_off",
     1: "heating_mode",
@@ -1574,22 +1603,123 @@ HEAT_PUMP_STATUS_MAP: dict[int, str] = {
     72: "groundwater_frost_protection",
     73: "flow_rate_wq_gw_circuit",
     77: "compressor_limitation",
+    96: "electrical_power_limitation",
     97: "preheat_compressor_oil",
     98: "cold_start",
     99: "machine_not_configured",
 }
 
-# Fallback key for status codes not present in HEAT_PUMP_STATUS_MAP (e.g. if
-# the controller reports an undocumented code). Must be included in the
+# ECR461 status codes as listed by Hoval.
+HEAT_PUMP_STATUS_MAP_ECR461: dict[int, str] = {
+    0: "switched_off",
+    1: "frost_protection",
+    2: "hp_flow_too_high",
+    3: "lock",
+    4: "hp_temp_too_low",
+    5: "free_cooling",
+    6: "evaporator_temp_too_low",
+    7: "stage_2_delay",
+    9: "passive_cooling",
+    10: "heating_mode",
+    11: "hd_fault",
+    12: "low_pressure_fault",
+    13: "safety_chain_fault",
+    14: "heat_source_fault",
+    15: "delay_15s",
+    16: "restart_delay",
+    17: "energy_ore_block",
+    18: "primary_lead_time",
+    19: "primary_run_on_time",
+    30: "active_cooling",
+    31: "active_cooling_passive_cooling_dhw",
+    40: "hot_water",
+    41: "frost_risk",
+    46: "condenser_frost_protection",
+    49: "unsuccessful_defrost",
+    50: "pool_charging",
+    51: "condenser_pump_lead_time",
+    52: "condenser_frost_warning",
+    54: "hot_gas_fault",
+    55: "primary_venting",
+    56: "auxiliary_heating_only",
+    59: "no_differential_pressure",
+    60: "dhw_auxiliary_heating_only",
+    62: "evaporator_sensor_fault",
+    63: "ecm35x_fault",
+    65: "synchronisation",
+    66: "crankcase_heating",
+    67: "condenser_flow_fault",
+    68: "groundwater_flushing",
+    69: "groundwater_pump_lead_time",
+    71: "groundwater_pump_run_on_time",
+    72: "groundwater_frost_protection",
+    73: "primary_min_pressure_fault",
+    74: "primary_max_pressure_fault",
+    75: "condenser_min_pressure_fault",
+    76: "condenser_max_pressure_fault",
+    78: "primary_max_limiter_cooling",
+    79: "primary_cooling_lock_time",
+    80: "supply_air_charging",
+    81: "hd_sensor_fault",
+    82: "starting_current_limiter_fault",
+    83: "phase_converter_fault",
+    87: "primary_flow_fault",
+    88: "hp_return_sensor_fault",
+    89: "outputs_inactive",
+    91: "flow_return_sensor_calibration",
+}
+
+HEAT_PUMP_STATUS_MAPS: dict[str, dict[int, str]] = {
+    HEAT_PUMP_CONTROLLER_WFA: HEAT_PUMP_STATUS_MAP,
+    HEAT_PUMP_CONTROLLER_ECR461: HEAT_PUMP_STATUS_MAP_ECR461,
+}
+
+# The state while the heat pump heats, on either controller.
+HEAT_PUMP_STATUS_HEATING = "heating_mode"
+
+# Fallback key for status codes not in the controller's map (e.g. if the
+# controller reports an undocumented code). Must be included in the
 # sensor's "options" list, since HA raises an error for ENUM sensor values
 # that aren't part of the declared options.
 HEAT_PUMP_STATUS_UNKNOWN = "unknown_status"
 
-# All valid states for the "enum" sensor (used as SensorEntity._attr_options).
+
+def heat_pump_status(options: Mapping[str, Any], raw_code: float | None) -> str | None:
+    """The status key of a raw code, for the entry's controller."""
+    if raw_code is None:
+        return None
+    return HEAT_PUMP_STATUS_MAPS[heat_pump_controller(options)].get(
+        int(raw_code), HEAT_PUMP_STATUS_UNKNOWN
+    )
+
+
+# All valid states of the "enum" sensor, for both controllers.
 HEAT_PUMP_STATUS_OPTIONS: list[str] = [
-    *HEAT_PUMP_STATUS_MAP.values(),
+    *dict.fromkeys(
+        key for status_map in HEAT_PUMP_STATUS_MAPS.values() for key in status_map.values()
+    ),
     HEAT_PUMP_STATUS_UNKNOWN,
 ]
+
+# Sensors whose values come from the heat pump's energy meters. The ECR461
+# has none, so they read 0 there and are created disabled.
+METER_SENSOR_KEYS: tuple[str, ...] = (
+    "cop",
+    "seasonal_performance_factor",
+    "current_power_output",
+    "current_cooling_power",
+    "electrical_power_input_heat_generator",
+    "heat_quantity_heat_generator",
+    "heat_quantity_heating",
+    "heat_quantity_hot_water",
+    "cooling_energy",
+    "total_electrical_energy_heat_generator",
+)
+
+
+def meters_present(options: Mapping[str, Any]) -> bool:
+    """Whether the heat pump has energy meters."""
+    return heat_pump_controller(options) != HEAT_PUMP_CONTROLLER_ECR461
 
 # --------------------------------------------------------------------------
 # SMART GRID REGISTERS

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 from pathlib import Path
@@ -30,6 +30,7 @@ from .const import (
     COOLING_SENSOR_KEYS,
     CONF_DHW_BOTTOM_SENSOR,
     CONF_DHW_PRESENT,
+    CONF_HEAT_PUMP_CONTROLLER,
     DHW_BOTTOM_TEMP_REGISTER,
     DHW_CURRENT_TEMP_REGISTER,
     HEATING_CIRCUIT_1,
@@ -50,6 +51,8 @@ from .const import (
     DEFAULT_MESSAGE_SPACING,
     DOMAIN,
     HEATING_CIRCUITS,
+    METER_SENSOR_KEYS,
+    SENSOR_REGISTERS,
     HeatingCircuit,
     RegisterDef,
     buffer_module_key,
@@ -67,6 +70,8 @@ from .const import (
     flow_max_key,
     flow_setpoint_raise_learning,
     flow_setpoint_raise_offered,
+    meters_present,
+    suggest_heat_pump_controller,
 )
 from .constant_control import ConstantFlowControl
 from .coordinator import HovalModbusCoordinator
@@ -163,6 +168,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             circuit_options.update(await async_read_buffers(coordinator))
         except UpdateFailed:
             pass
+    if CONF_HEAT_PUMP_CONTROLLER not in entry.options:
+        try:
+            controller = await async_suggest_heat_pump_controller(
+                coordinator.async_read_value
+            )
+        except UpdateFailed:
+            pass
+        else:
+            circuit_options[CONF_HEAT_PUMP_CONTROLLER] = controller
+            update_meter_sensors(
+                hass, entry, meters_present(circuit_options)
+            )
     if CONF_DHW_BOTTOM_SENSOR not in entry.options and dhw_present(
         {**entry.options, **circuit_options}
     ):
@@ -197,7 +214,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             constant.async_start()
             coordinator.constant_controls[hc.key] = constant
 
-    if cooling_enabled(entry.options):
+    if cooling_enabled(entry.options) and meters_present(entry.options):
         _enable_sensors(hass, entry, COOLING_SENSOR_KEYS)
     # A buffer sensor offered without a value before, once it shows one.
     _enable_sensors(
@@ -253,6 +270,52 @@ async def async_read_circuit_options(
         options[constant_control_key(hc)] = strategy == CONTROL_STRATEGY_CONSTANT
         options[flow_max_key(hc)] = round(maximum, 1)
     return options
+
+
+_SENSORS_BY_KEY = {reg.key: reg for reg in SENSOR_REGISTERS}
+
+
+async def async_suggest_heat_pump_controller(
+    read: Callable[[RegisterDef], Awaitable[float]],
+) -> str:
+    """The heat pump's controller suggested by its operating hours and
+    energy meters (see suggest_heat_pump_controller). Raises what `read`
+    raises."""
+    return suggest_heat_pump_controller(
+        *[
+            await read(_SENSORS_BY_KEY[key])
+            for key in (
+                "operating_hours_heat_generator",
+                "heat_quantity_heat_generator",
+                "total_electrical_energy_heat_generator",
+            )
+        ]
+    )
+
+
+def update_meter_sensors(hass: HomeAssistant, entry: ConfigEntry, meters: bool) -> None:
+    """After the heat pump's controller was set: without energy meters,
+    disables their sensors, which only read 0; with meters, enables those
+    the integration disabled again (the ones enabled by default)."""
+    registry = er.async_get(hass)
+    if meters:
+        _enable_sensors(
+            hass,
+            entry,
+            [key for key in METER_SENSOR_KEYS if _SENSORS_BY_KEY[key].enabled_default],
+        )
+        return
+    for key in METER_SENSOR_KEYS:
+        entity_id = registry.async_get_entity_id(
+            Platform.SENSOR, DOMAIN, f"{entry.entry_id}_{key}"
+        )
+        if entity_id is None:
+            continue
+        reg_entry = registry.async_get(entity_id)
+        if reg_entry and not reg_entry.disabled:
+            registry.async_update_entity(
+                entity_id, disabled_by=er.RegistryEntryDisabler.INTEGRATION
+            )
 
 
 def _enable_sensors(
@@ -323,7 +386,8 @@ async def _async_detect_present(
         elif (present := await nonzero(CIRCUIT_FLOW_TEMP_REGISTERS[hc.key])) is not None:
             options[circuit_present_key(hc)] = present
     if CONF_DHW_PRESENT not in entry.options:
-        if entry.options:
+        # The controller is chosen when the entry is created.
+        if set(entry.options) - {CONF_HEAT_PUMP_CONTROLLER}:
             options[CONF_DHW_PRESENT] = True
         elif (present := await nonzero(DHW_CURRENT_TEMP_REGISTER)) is not None:
             options[CONF_DHW_PRESENT] = present

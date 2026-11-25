@@ -42,6 +42,9 @@ COOLING_ROOM_NORMAL_HC1 = 31796
 COOLING_ROOM_ECO_HC1 = 31799
 FLOW_TEMP_REGISTERS = {2: 1514, 3: 1515}
 DHW_TEMP = 1500
+HEAT_PUMP_STATUS = 1539
+# Low word of the heat pump's operating hours (1507/1508).
+OPERATING_HOURS_LOW = 1508
 # Second hot water sensor at the bottom of the tank (SF2).
 DHW_BOTTOM_TEMP = 27483
 DHW_BOTTOM_SENSOR = "_hot_water_temperature_bottom"
@@ -227,8 +230,21 @@ def add_integration(token: str) -> str:
         },
         token=token,
     )
+    # Operating hours without energy meters suggest the ECR461.
+    if result.get("step_id") != "controller":
+        raise SystemExit(f"Config flow did not ask for the controller: {result}")
+    field = {f["name"]: f for f in result["data_schema"]}["heat_pump_controller"]
+    if field.get("default") != "ecr461":
+        raise SystemExit(f"Config flow didn't suggest the ECR461: {field}")
+    result = request(
+        "POST",
+        f"/api/config/config_entries/flow/{flow['flow_id']}",
+        body={"heat_pump_controller": "wfa"},
+        token=token,
+    )
     if result.get("type") != "create_entry":
         raise SystemExit(f"Config flow did not create an entry: {result}")
+    print("OK: setup suggests the ECR461 for a heat pump without energy meters")
     return result["result"]["entry_id"]
 
 
@@ -676,6 +692,43 @@ def check_schema_card(token: str, entry_id: str) -> None:
     if unknown.get("success"):
         raise SystemExit("The schema command answered for an unknown entry")
     print("OK: the diagram card and the dashboard are served, the schema lists the components")
+
+
+def meter_sensor_disabled_by(token: str, entry_id: str) -> str | None:
+    answer = ws_command(token, {"type": "config/entity_registry/list"})
+    return next(
+        e["disabled_by"]
+        for e in answer["result"]
+        if e.get("unique_id") == f"{entry_id}_cop"
+    )
+
+
+def check_heat_pump_controller(token: str, entry_id: str) -> None:
+    """Status codes are read by the chosen controller; without energy
+    meters (ECR461) their sensors are disabled, and enabled again on WFA."""
+    status = "_heat_pump_status"
+    write_sim(HEAT_PUMP_STATUS, 10)
+    wait_for_attribute(token, status, lambda s: s["state"] == "unknown_status")
+    submit_general_and_wait_for_reload(
+        token, entry_id, {"scan_interval": 30, "heat_pump_controller": "ecr461"}
+    )
+    wait_for_attribute(token, status, lambda s: s["state"] == "heating_mode")
+    if meter_sensor_disabled_by(token, entry_id) != "integration":
+        raise SystemExit("The COP sensor wasn't disabled for the ECR461")
+    schema = ws_command(token, {"type": "hoval_unofficial/schema", "entry_id": entry_id})["result"]
+    if schema["meters"] or schema["heat_pump"]["cop"] or schema["heat_pump"]["power"]:
+        raise SystemExit(f"The schema lists meter values for the ECR461: {schema['heat_pump']}")
+    submit_general_and_wait_for_reload(
+        token, entry_id, {"scan_interval": 30, "heat_pump_controller": "wfa"}
+    )
+    wait_for_attribute(token, status, lambda s: s["state"] == "unknown_status")
+    if meter_sensor_disabled_by(token, entry_id) is not None:
+        raise SystemExit("The COP sensor wasn't enabled again for the WFA")
+    schema = ws_command(token, {"type": "hoval_unofficial/schema", "entry_id": entry_id})["result"]
+    if not schema["meters"] or not schema["heat_pump"]["cop"]:
+        raise SystemExit(f"The schema lacks the meter values for the WFA: {schema['heat_pump']}")
+    write_sim(HEAT_PUMP_STATUS, 0)
+    print("OK: status codes follow the controller, meter sensors are disabled and enabled")
 
 
 def check_dhw_bottom_sensor(token: str, entry_id: str) -> None:
@@ -1393,6 +1446,7 @@ def main() -> None:
     # temperature other than 0.
     for address in (*FLOW_TEMP_REGISTERS.values(), DHW_TEMP):
         write_sim(address, 350)
+    write_sim(OPERATING_HOURS_LOW, 1600)
     set_silent_range(*SILENT_RANGE)
     entry_id = add_integration(token)
     states = wait_for_states(token)
@@ -1402,6 +1456,7 @@ def main() -> None:
     check_schema_card(token, entry_id)
     check_timeout_option(token, entry_id)
     check_message_spacing_option(token, entry_id)
+    check_heat_pump_controller(token, entry_id)
     check_dhw_bottom_sensor(token, entry_id)
     check_sending(token, entry_id)
     check_reading_room_sensor(token, entry_id)

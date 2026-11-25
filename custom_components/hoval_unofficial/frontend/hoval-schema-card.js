@@ -110,7 +110,11 @@ const MODE_BY_STATUS = {
   heating_mode: "heat",
   active_cooling: "cool",
   passive_cooling: "cool",
+  free_cooling: "cool",
+  active_cooling_passive_cooling_dhw: "cool",
+  auxiliary_heating_only: "heat",
   hot_water: "dhw",
+  dhw_auxiliary_heating_only: "dhw",
   defrost: "defrost",
 };
 const SMART_GRID_ACTIVE = ["preferred_operation", "forced_consumption"];
@@ -139,6 +143,13 @@ const FOOTER_VALUES = {
   },
 };
 const FOOTER_DEFAULT = ["outdoor", "power_input", "cop", "starts"];
+// Without energy meters (ECR461) there is no power input or COP.
+const FOOTER_DEFAULT_WITHOUT_METERS = ["outdoor", "runtime", "starts"];
+
+// The footer's values unless chosen in the card's settings.
+function footerDefault(schema) {
+  return schema && schema.meters === false ? FOOTER_DEFAULT_WITHOUT_METERS : FOOTER_DEFAULT;
+}
 
 // Geometry of the diagram (SVG user units).
 const HP_RIGHT = 200;
@@ -230,7 +241,7 @@ class HovalSchemaCard extends HTMLElement {
 
   // The footer's values in their order: [key, definition, entity id].
   _footerValues() {
-    const chosen = Array.isArray(this._config.footer) ? this._config.footer : FOOTER_DEFAULT;
+    const chosen = Array.isArray(this._config.footer) ? this._config.footer : footerDefault(this._schema);
     return chosen
       .filter((key) => Object.prototype.hasOwnProperty.call(FOOTER_VALUES, key))
       .map((key) => [key, FOOTER_VALUES[key], FOOTER_VALUES[key].entity(this._schema)])
@@ -594,6 +605,10 @@ class HovalSchemaCard extends HTMLElement {
     const cooling = mode === "cool";
     const power = cooling ? hp.cooling_power : hp.power;
     const status = statusState ? this._formatState(hp.status) : "—";
+    // A fault shows red; nothing flows, as while idle.
+    const pillColor = statusState && statusState.state.endsWith("_fault")
+      ? "fault"
+      : mode === "idle" ? "idle" : color;
     const target = this._usable(hp.target);
     const rows = [
       [this._t("temperature"), hp.temperature, 1, target ? this._num(target.state) : undefined],
@@ -604,7 +619,7 @@ class HovalSchemaCard extends HTMLElement {
     let svg =
       `<rect class="box" x="10" y="40" width="190" height="170" rx="12"/>` +
       `<text class="title" x="24" y="64">${esc(this._t("heat_pump"))}</text>` +
-      this._spot(20, 72, 170, 26, hp.status, this._pill(24, 74, status, mode === "idle" ? "idle" : color, 162));
+      this._spot(20, 72, 170, 26, hp.status, this._pill(24, 74, status, pillColor, 162));
     rows.forEach(([label, id, digits, rowTarget], i) => {
       svg += this._row(24, 188, 122 + i * 22, label, this._value(id, digits), rowTarget, id);
     });
@@ -768,12 +783,14 @@ const STYLE = `
     --hsc-hot: var(--state-climate-heat-color, #ff8100);
     --hsc-cold: var(--state-climate-cool-color, #2b9af9);
     --hsc-amber: var(--warning-color, #ffa600);
+    --hsc-fault: var(--error-color, #db4437);
     --hsc-sg: var(--success-color, #43a047);
     --hsc-box: color-mix(in srgb, var(--hsc-fg) 3%, var(--hsc-card));
     --hsc-tank: color-mix(in srgb, var(--hsc-fg) 6%, var(--hsc-card));
     --hsc-hot-tint: color-mix(in srgb, var(--hsc-hot) 18%, var(--hsc-card));
     --hsc-cold-tint: color-mix(in srgb, var(--hsc-cold) 18%, var(--hsc-card));
     --hsc-amber-tint: color-mix(in srgb, var(--hsc-amber) 18%, var(--hsc-card));
+    --hsc-fault-tint: color-mix(in srgb, var(--hsc-fault) 16%, var(--hsc-card));
     --hsc-sg-tint: color-mix(in srgb, var(--hsc-sg) 16%, var(--hsc-card));
   }
   ha-card { overflow: hidden; }
@@ -805,10 +822,10 @@ const STYLE = `
   .sym { stroke: var(--hsc-card); stroke-width: 1.5; stroke-linejoin: round; }
   .pump { fill: var(--hsc-card); stroke-width: 2.5; }
   .pill-bg.hot { fill: var(--hsc-hot-tint); } .pill-bg.cold { fill: var(--hsc-cold-tint); } .pill-bg.amber { fill: var(--hsc-amber-tint); }
-  .pill-bg.idle { fill: var(--hsc-tank); } .pill-bg.sg { fill: var(--hsc-sg-tint); }
+  .pill-bg.idle { fill: var(--hsc-tank); } .pill-bg.sg { fill: var(--hsc-sg-tint); } .pill-bg.fault { fill: var(--hsc-fault-tint); }
   .pill { font-size: 11.5px; font-weight: 600; }
   .pill.hot { fill: var(--hsc-hot); } .pill.cold { fill: var(--hsc-cold); } .pill.amber { fill: var(--hsc-amber); }
-  .pill.idle { fill: var(--hsc-muted); } .pill.sg { fill: var(--hsc-sg); font-size: 10.5px; }
+  .pill.idle { fill: var(--hsc-muted); } .pill.sg { fill: var(--hsc-sg); font-size: 10.5px; } .pill.fault { fill: var(--hsc-fault); }
   .hit { fill: transparent; }
   .spot { cursor: pointer; outline: none; }
   .spot:hover .value, .spot:focus-visible .value, .spot:hover .big { text-decoration: underline; }
@@ -851,6 +868,23 @@ class HovalSchemaCardEditor extends HTMLElement {
     this._render();
   }
 
+  // The footer's default depends on whether the heat pump has energy
+  // meters, which the schema tells.
+  async _loadFooterDefault() {
+    const entryId = this._config.entry_id;
+    this._footerLoaded = true;
+    this._footerEntry = entryId;
+    let schema = null;
+    try {
+      schema = await this._hass.callWS({ type: "hoval_unofficial/schema", ...(entryId ? { entry_id: entryId } : {}) });
+    } catch (err) {
+      // Without the schema, the default with meters applies.
+    }
+    if (this._footerEntry !== entryId) return;
+    this._footerDefault = footerDefault(schema);
+    this._render();
+  }
+
   _t(key) {
     const lang = (this._hass && this._hass.locale && this._hass.locale.language) || "en";
     const table = TEXT[lang.split("-")[0]] || TEXT.en;
@@ -859,6 +893,8 @@ class HovalSchemaCardEditor extends HTMLElement {
 
   _render() {
     if (!this._hass || !this._config) return;
+    if (!this._footerLoaded || this._footerEntry !== this._config.entry_id) this._loadFooterDefault();
+    const defaultFooter = this._footerDefault || FOOTER_DEFAULT;
     if (!this._form) {
       this._form = document.createElement("ha-form");
       this._form.computeLabel = (field) => this._t(`editor_${field.name}`);
@@ -870,7 +906,7 @@ class HovalSchemaCardEditor extends HTMLElement {
         for (const key of ["title", "entry_id", "show_buffer"]) {
           if (config[key] === "" || config[key] === undefined || config[key] === null || config[key] === false) delete config[key];
         }
-        if (!Array.isArray(config.footer) || config.footer.join() === FOOTER_DEFAULT.join()) delete config.footer;
+        if (!Array.isArray(config.footer) || config.footer.join() === (this._footerDefault || FOOTER_DEFAULT).join()) delete config.footer;
         if (!Array.isArray(config.footer_entities) || !config.footer_entities.length) delete config.footer_entities;
         this._config = config;
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
@@ -878,7 +914,7 @@ class HovalSchemaCardEditor extends HTMLElement {
       this.appendChild(this._form);
     }
     this._form.hass = this._hass;
-    this._form.data = { footer: FOOTER_DEFAULT, ...this._config };
+    this._form.data = { footer: defaultFooter, ...this._config };
     const lang = this._hass.locale && this._hass.locale.language;
     if (lang !== this._schemaLang) {
       this._schemaLang = lang;

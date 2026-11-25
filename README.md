@@ -55,9 +55,10 @@ Home Assistant 2026.9 or newer. The integration uses Home Assistant's
 built-in Modbus connection, so no extra Python packages are needed and
 no Modbus YAML configuration is required.
 
-TopTronic E gateway (TTE-GW) software 2.39 or newer: only from this version
-on does the gateway provide the cooling room setpoints, see
-[Cooling](#cooling).
+HovalConnect gateway firmware 2.39 or newer: only from this version on
+does the gateway provide the cooling room setpoints, see
+[Cooling](#cooling). Hoval recommends keeping the gateway firmware up to
+date.
 
 ## Installation
 
@@ -90,6 +91,13 @@ restart Home Assistant.
 Home Assistant tests the connection directly during setup. If it fails,
 an error message is shown in the dialog.
 
+3. Choose the **heat pump controller**: **WFA** (e.g. Belaria) or
+   **ECR461** (e.g. Thermalia). It decides what the heat pump's status
+   codes mean and whether it has energy meters; no register tells them
+   apart. The dialog suggests ECR461 if the heat pump has operating hours
+   but both energy meters read 0. You can change it later under
+   [Options](#options) → General.
+
 You can change the IP address, port, name, or device ID later via the
 entry's three-dot menu → **Reconfigure**.
 
@@ -102,8 +110,9 @@ entry's three-dot menu → **Reconfigure**.
   thermostats, history, energy and settings, built from what the
   integration found; see [Hoval dashboard](#hoval-dashboard).
 - **Sensors** — outdoor temperature, flow/return temperatures, heat
-  quantities, operating hours, COP, seasonal performance factor (SPF), the
-  controller's status as readable text in your HA language (e.g. "Heating
+  quantities, operating hours, COP, seasonal performance factor (SPF) (with
+  the ECR461 controller, which has no energy meters, the sensors for energy,
+  power, COP and SPF are created disabled), the controller's status as readable text in your HA language (e.g. "Heating
   mode" / "Defrost" / "Frost protection") and its error code ("No error" or
   the warning number, e.g. "W11"). Buffer temperatures where a buffer
   sensor is found, see [Buffer sensors](#buffer-sensors).
@@ -337,7 +346,7 @@ an installation does this. While the circuit's status shows cooling:
   Smart Grid offset); in Week 1 / Week 2 the controller's current room
   setpoint. Changing it writes the cooling room setpoint, only with the
   experimental function **Cooling**; without it, the setpoint is shown but
-  can't be changed. The cooling room setpoints need gateway software 2.39
+  can't be changed. The cooling room setpoints need gateway firmware 2.39
   or newer; without them, the current room setpoint is shown.
 - A [flow setpoint raise](#flow-setpoint-raise) set by the integration is
   replaced by the installer's raise, see there.
@@ -558,7 +567,9 @@ The card's settings can be set in the card editor's form (or in YAML):
   while the heat pump loads the hot water tank or defrosts.
 - **Footer values** (`footer`) — which values the footer shows, in this
   order. Default: `outdoor` (outdoor temperature), `power_input`, `cop` and
-  `starts` (compressor starts within the last 24 hours). Also available:
+  `starts` (compressor starts within the last 24 hours); with the ECR461
+  controller, which has no energy meters, `outdoor`, `runtime` and
+  `starts`. Also available:
   `spf` (seasonal performance factor) and, each within the last 24 hours,
   `heat` (heat quantity), `electricity` (electrical energy) and `runtime`
   (operating hours). The values within the last 24 hours come from the
@@ -589,6 +600,9 @@ footer_entities:
   while defrosting (the water of the buffer and the heating circuits gives
   off the heat for it), grey when idle. While the tank is loaded (heat pump
   status "Hot water"), the diverting valve points to the hot water tank.
+  With the ECR461, "Auxiliary heating only" counts as heating and "DHW with
+  auxiliary heating only" as loading the tank. A fault of the heat pump
+  shows its status in red.
 - Values are shown as "actual / target" (hover for a tooltip). A hot water
   tank with two sensors shows its target once for the tank: loading starts
   when the top sensor falls below it and ends when the bottom sensor
@@ -673,6 +687,14 @@ Devices & Services → Hoval Heat Pump Integration (unofficial)**:
   temperature isn't 0 (always for an installation set up before). Turning
   off a circuit that sends a room temperature is refused; change its source
   first.
+- **Heat pump controller** — WFA (e.g. Belaria) or ECR461 (e.g.
+  Thermalia), see [Setup](#setup). The status codes of the heat pump mean
+  different things on each; the **Status** sensor shows the same text for
+  the same state on both. Switching to ECR461 disables the sensors for
+  energy, power, COP and SPF, as it has no energy meters; switching back
+  to WFA enables them again. An installation set up before this option
+  existed gets the suggestion on its next start. The meaning of the error
+  codes is only known for the WFA so far.
 - **Room temperature source** — see above, configurable per heating
   circuit.
 

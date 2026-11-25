@@ -34,6 +34,7 @@ from .const import (
     dhw_bottom_sensor,
     dhw_present,
     found_buffer_modules,
+    meters_present,
     present_circuits,
 )
 
@@ -189,6 +190,8 @@ def build_schema(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         "hot_water": hot_water,
         "circuits": circuits,
         "smart_grid_status": sensor(SMART_GRID_STATUS_REGISTER.key),
+        # Whether the heat pump has energy meters (not with the ECR461).
+        "meters": meters_present(options),
         "entities": {
             reg_entry.unique_id.removeprefix(prefix): reg_entry.entity_id
             for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id)

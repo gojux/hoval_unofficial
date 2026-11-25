@@ -40,9 +40,6 @@ from datetime import datetime, timedelta
 from statistics import fmean
 from typing import Any
 
-# Heat pump status code "heating mode" (HEAT_PUMP_STATUS_MAP).
-STATUS_HEATING = 1
-
 # Measurements start once the start-up phase with higher modulation is over:
 # when the modulation is down to the lowest value seen during a surplus (plus
 # MODULATION_MARGIN), but not before MIN_SETTLE_TIME, which skips the odd
@@ -155,14 +152,14 @@ class FlowSetpointRaiseAdvisor:
     def update(
         self,
         now: datetime,
-        status: float | None,
+        heating: bool,
         outdoor: float | None,
         current_raise: float | None,
         modulation: float | None,
         sample: Sample | None,
     ) -> Suggestion:
         """Processes one poll and returns the suggestion."""
-        if status is None or int(status) != STATUS_HEATING or sample is None:
+        if not heating or sample is None:
             self._run_start = None
             self._samples.clear()
             return self._from_table(MODE_IDLE, outdoor, current_raise)

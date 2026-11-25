@@ -12,6 +12,13 @@
           "scan_interval": "Abfrageintervall (Sekunden)"
         }
       },
+      "controller": {
+        "title": "Wärmepumpen-Regler",
+        "description": "Vom Regler der Wärmepumpe hängt ab, was ihre Status-Codes bedeuten und ob sie Energiezähler hat. Kein Register verrät ihn; der Vorschlag beruht auf den Energiezählern. Später änderbar unter Optionen -> Allgemein.",
+        "data": {
+          "heat_pump_controller": "Wärmepumpen-Regler"
+        }
+      },
       "reconfigure": {
         "title": "Wärmepumpen-Verbindung aktualisieren",
         "description": "Aktualisiere Namen und Verbindungsdaten der Wärmepumpensteuerung.",
@@ -52,7 +59,8 @@
           "message_spacing": "Abstand zwischen Modbus-Anfragen (Millisekunden)",
           "heating_circuit_2_present": "Heizkreis 2 vorhanden",
           "heating_circuit_3_present": "Heizkreis 3 vorhanden",
-          "dhw_present": "Warmwasser vorhanden"
+          "dhw_present": "Warmwasser vorhanden",
+          "heat_pump_controller": "Wärmepumpen-Regler"
         },
         "data_description": {
           "scan_interval": "Empfohlen: 20 Sekunden oder weniger. Das Hoval-Gateway lässt länger ungenutzte Verbindungen fallen, danach dauert jede Abfrage einige Sekunden länger.",
@@ -60,7 +68,8 @@
           "message_spacing": "Standard: 0 (kein Abstand). Kann helfen, wenn das Gateway direkt aufeinanderfolgende Anfragen manchmal nicht beantwortet. Gilt für alle Anfragen an diese Geräte-ID über die geteilte Verbindung, auch die anderer Integrationen, und verlängert jede Abfrage.",
           "heating_circuit_2_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
           "heating_circuit_3_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
-          "dhw_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür. Beim Speichern sucht sie außerdem einen zweiten Fühler unten im Warmwasserspeicher, z. B. einen nachgerüsteten."
+          "dhw_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür. Beim Speichern sucht sie außerdem einen zweiten Fühler unten im Warmwasserspeicher, z. B. einen nachgerüsteten.",
+          "heat_pump_controller": "Bestimmt, was die Status-Codes der Wärmepumpe bedeuten. Ohne Energiezähler (ECR461) werden die Sensoren für Energie, Leistung, COP und JAZ deaktiviert; zurück auf WFA werden sie wieder aktiviert."
         }
       },
       "circuit": {
@@ -347,6 +356,45 @@
           "preheat_compressor_oil": "Kompressoröl vorheizen",
           "cold_start": "Kaltstart",
           "machine_not_configured": "Maschine nicht konfiguriert",
+          "electrical_power_limitation": "Elektrische Leistungsbegrenzung",
+          "free_cooling": "Freie Kühlung",
+          "evaporator_temp_too_low": "Verdampfertemperatur zu tief",
+          "stage_2_delay": "Verzögerung Stufe 2",
+          "safety_chain_fault": "Sicherheitskettenstörung",
+          "heat_source_fault": "Wärmequellenstörung",
+          "delay_15s": "15s-Verzögerung",
+          "active_cooling_passive_cooling_dhw": "Aktivkühlen und Passivkühlen WW",
+          "frost_risk": "WP-Frostgefahr",
+          "condenser_frost_protection": "Kondensatorfrostschutz",
+          "pool_charging": "Schwimmbad laden",
+          "condenser_frost_warning": "Kondensatorfrostwarnung",
+          "hot_gas_fault": "Heißgas-Störung",
+          "primary_venting": "Entlüftung Primärkreis",
+          "auxiliary_heating_only": "Nur Zusatzheizung",
+          "no_differential_pressure": "Kein Differenzdruck",
+          "dhw_auxiliary_heating_only": "WW nur mit Zusatzheizung",
+          "evaporator_sensor_fault": "Verdampferfühler defekt",
+          "ecm35x_fault": "Störung ECM35x",
+          "synchronisation": "Synchronisation",
+          "crankcase_heating": "Kurbelwannenheizung",
+          "condenser_flow_fault": "Strömungsfehler Kondenserkreis",
+          "groundwater_flushing": "Grundwasserspülzeit",
+          "groundwater_pump_lead_time": "Vorlaufzeit Grundwasserpumpe",
+          "groundwater_pump_run_on_time": "Nachlaufzeit Grundwasserpumpe",
+          "primary_min_pressure_fault": "Störung min. Druck Primärkreis",
+          "primary_max_pressure_fault": "Störung max. Druck Primärkreis",
+          "condenser_min_pressure_fault": "Störung min. Druck Kondenserkreis",
+          "condenser_max_pressure_fault": "Störung max. Druck Kondenserkreis",
+          "primary_max_limiter_cooling": "Primärkreis Maximalbegrenzer Kühlen",
+          "primary_cooling_lock_time": "Primärkreis Kühlsperrzeit",
+          "supply_air_charging": "Ladung Zuluft",
+          "hd_sensor_fault": "HD-Störung (Sensor)",
+          "starting_current_limiter_fault": "Störung Anlaufstrombegrenzer",
+          "phase_converter_fault": "Phasenrichterfehler",
+          "primary_flow_fault": "Strömungsfehler Primärkreis",
+          "hp_return_sensor_fault": "WP-Rücklauffühler defekt",
+          "outputs_inactive": "Ausgänge inaktiv",
+          "flow_return_sensor_calibration": "Fühlerabgleich WP-Vorlauf/Rücklauf",
           "unknown_status": "Unbekannter Status"
         }
       },
@@ -522,6 +570,12 @@
         "modbus": "Raumfühler der Steuerung auslesen",
         "entity": "Home Assistant Entität, nur Anzeige bei Widget",
         "entity_write": "Home Assistant Entität, an Steuerung übertragen"
+      }
+    },
+    "heat_pump_controller": {
+      "options": {
+        "wfa": "WFA (z. B. Belaria)",
+        "ecr461": "ECR461 (z. B. Thermalia, ohne Energiezähler)"
       }
     }
   },
