@@ -167,15 +167,18 @@ follows the installation.
 - **1505**: named "Wärmemenge Heizen" in the list, but holds heating plus
   hot water (the sum of 27484 and 27488).
 - **1539**: the list describes it as "WEZ-Status" (burner status). It
-  reports the status codes of the heat pump's controller (WFA) that the
+  reports the status codes of the heat pump's controller (WFA200) that the
   guideline lists for 18723, e.g. 8 = defrost, 51 = condenser pump lead
-  time. With the ECR461 controller (e.g. Thermalia) the codes have other
+  time. With the ECR461 controller (older Thermalia and Belaria models,
+  see the README's setup) the codes have other
   meanings (list from Hoval, e.g. 1 = frost protection, 10 = heating with
   the heat pump); the integration picks the list by the option "Heat pump
   controller". The ECR461 has no energy meters, so 1505, 18731, 18733,
   18735, 25611, 25613, 27467, 27484, 27488 and 27490 read 0 there.
-- **1534**: 255 means "no error"; the guideline maps the other codes to
-  warning numbers (74 = W11 … 126 = W63).
+- **1534**: 255 means "no error". Hoval's lists for the WFA200 and the
+  ECR461 encode the other codes the same way: 64–127 = W01–W64, 128–191 =
+  B01–B64, 192–254 = E01–E63 (e.g. 74 = W11, 128 = B01, 192 = E01); they
+  differ only in which codes occur.
 - **1501–1503** (status of the circuit's control): the datapoint list
   documents codes 0–19, 22, 23 and 26; the guideline additionally lists
   24/25 (away, heating/cooling) and 27 (Smart Grid preferred operation,

@@ -279,9 +279,10 @@ heat pump controller, which is stored when the entry is created). An
 option whose register isn't answered stays missing and is detected on the
 next start.
 
-## Heat pump controller (WFA / ECR461)
+## Heat pump controller (WFA200 / ECR461)
 
-Option `heat_pump_controller` (`heat_pump_controller()`, default WFA). The
+Option `heat_pump_controller` (`heat_pump_controller()`, default `wfa` =
+WFA200; the models of each are listed in the README's setup). The
 codes in 1539 depend on it: `HEAT_PUMP_STATUS_MAPS` holds one map per
 controller, with the same key for the same meaning, so the status sensor,
 the system diagram card (`MODE_BY_STATUS`; a key ending in `_fault` shows

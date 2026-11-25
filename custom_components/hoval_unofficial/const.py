@@ -1514,33 +1514,43 @@ STATUS_REGISTERS: list[RegisterDef] = [
 CONTROLLER_ERROR_NONE = "no_error"
 CONTROLLER_ERROR_UNKNOWN = "unknown_error"
 
-# Raw error code -> enum sensor state, as listed in Hoval's Modbus guideline.
-# Unlisted codes fall back to CONTROLLER_ERROR_UNKNOWN; the raw code is
-# always exposed as an attribute.
+# Error codes each controller reports, as listed by Hoval. Both encode the
+# number the same way: 64-127 = W01-W64 (warnings), 128-191 = B01-B64,
+# 192-254 = E01-E63; 255 means "no error". So one map serves both.
+CONTROLLER_ERROR_CODES_WFA200: tuple[int, ...] = (
+    74, 76, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 100, 101, 102, 103,
+    104, 106, 121, 122, 126, 128, 129, 130, 131, 132, 134, 135, 136, 137, 138,
+    139, 140, 142, 147, 148, 149, 150, 151, 152, 153, 159, 160, 161, 162, 163,
+    164, 171, 172, 173, 174, 175, 176, 177, 178, 181, 182, 183, 184, 185, 188,
+    189, 190, 192, 193, 194, 195, 198, 199, 200, 202, 203, 204, 206, 207, 213,
+    216, 217, 218, 219, 220, 221, 222, 230, 231, 234, 235, 236, 247, 252, 253,
+)
+CONTROLLER_ERROR_CODES_ECR461: tuple[int, ...] = (
+    64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 128, 129, 130, 131, 132, 133, 134,
+    135, 136, 137, 138, 139, 140, 142, 144, 145, 146, 147, 148, 149, 150, 151,
+    152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166,
+    167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181,
+    182, 183, 184, 185, 186, 187, 188, 191, 192, 193, 194, 195, 196, 197, 198,
+    199, 200, 201, 202, 203, 204, 205, 206,
+)
+
+
+def _controller_error_key(code: int) -> str:
+    """The enum state of an error code, e.g. 74 -> "w11"."""
+    for first, letter in ((192, "e"), (128, "b"), (64, "w")):
+        if code >= first:
+            return f"{letter}{code - first + 1:02d}"
+    raise ValueError(code)
+
+
+# Raw error code -> enum sensor state. Unlisted codes fall back to
+# CONTROLLER_ERROR_UNKNOWN; the raw code is always exposed as an attribute.
 CONTROLLER_ERROR_MAP: dict[int, str] = {
     255: CONTROLLER_ERROR_NONE,
-    74: "w11",
-    76: "w13",
-    80: "w17",
-    81: "w18",
-    82: "w19",
-    83: "w20",
-    84: "w21",
-    85: "w22",
-    86: "w23",
-    87: "w24",
-    88: "w25",
-    89: "w26",
-    90: "w27",
-    100: "w37",
-    101: "w38",
-    102: "w39",
-    103: "w40",
-    104: "w41",
-    106: "w43",
-    121: "w58",
-    122: "w59",
-    126: "w63",
+    **{
+        code: _controller_error_key(code)
+        for code in sorted({*CONTROLLER_ERROR_CODES_WFA200, *CONTROLLER_ERROR_CODES_ECR461})
+    },
 }
 CONTROLLER_ERROR_OPTIONS: list[str] = [
     *CONTROLLER_ERROR_MAP.values(),
@@ -1548,8 +1558,9 @@ CONTROLLER_ERROR_OPTIONS: list[str] = [
 ]
 
 # The heat pump's own controller, which decides the meaning of the status
-# codes in 1539 and whether energy meters are there: WFA (e.g. Belaria) or
-# ECR461 (e.g. Thermalia). No register tells them apart; chosen when the
+# codes in 1539 and whether energy meters are there: WFA200 (Belaria pro,
+# UltraSource, Thermalia 43 series) or ECR461 (Thermalia comfort/twin/dual,
+# Belaria compact IR/twin/dual). No register tells them apart; chosen when the
 # entry is set up and under Options -> General, suggested by
 # suggest_heat_pump_controller.
 CONF_HEAT_PUMP_CONTROLLER = "heat_pump_controller"

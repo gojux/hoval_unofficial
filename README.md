@@ -55,6 +55,9 @@ Home Assistant 2026.9 or newer. The integration uses Home Assistant's
 built-in Modbus connection, so no extra Python packages are needed and
 no Modbus YAML configuration is required.
 
+A Hoval heat pump with TopTronic E control. Older models with TopTronic T
+have no suitable interface and aren't supported.
+
 HovalConnect gateway firmware 2.39 or newer: only from this version on
 does the gateway provide the cooling room setpoints, see
 [Cooling](#cooling). Hoval recommends keeping the gateway firmware up to
@@ -91,11 +94,15 @@ restart Home Assistant.
 Home Assistant tests the connection directly during setup. If it fails,
 an error message is shown in the dialog.
 
-3. Choose the **heat pump controller**: **WFA** (e.g. Belaria) or
-   **ECR461** (e.g. Thermalia). It decides what the heat pump's status
-   codes mean and whether it has energy meters; no register tells them
-   apart. The dialog suggests ECR461 if the heat pump has operating hours
-   but both energy meters read 0. You can change it later under
+3. Choose the **heat pump controller**:
+   - **WFA200** — Belaria pro, UltraSource, Thermalia 43 series
+   - **ECR461** — Thermalia comfort/twin/dual (H), Belaria compact IR,
+     Belaria twin A/AR and I/IR, Belaria dual I/IR
+
+   It decides what the heat pump's status codes mean and whether it has
+   energy meters (only the WFA200 has them); no register tells them apart.
+   The dialog suggests ECR461 if the heat pump has operating hours but both
+   energy meters read 0. You can change it later under
    [Options](#options) → General.
 
 You can change the IP address, port, name, or device ID later via the
@@ -114,7 +121,7 @@ entry's three-dot menu → **Reconfigure**.
   the ECR461 controller, which has no energy meters, the sensors for energy,
   power, COP and SPF are created disabled), the controller's status as readable text in your HA language (e.g. "Heating
   mode" / "Defrost" / "Frost protection") and its error code ("No error" or
-  the warning number, e.g. "W11"). Buffer temperatures where a buffer
+  the code shown on the controller, e.g. "W11", "B01" or "E01"). Buffer temperatures where a buffer
   sensor is found, see [Buffer sensors](#buffer-sensors).
 - **Diagnostic sensors**, disabled by default — per heating circuit its
   control strategy (e.g. "Weather-compensated with room influence") and its
@@ -687,14 +694,14 @@ Devices & Services → Hoval Heat Pump Integration (unofficial)**:
   temperature isn't 0 (always for an installation set up before). Turning
   off a circuit that sends a room temperature is refused; change its source
   first.
-- **Heat pump controller** — WFA (e.g. Belaria) or ECR461 (e.g.
-  Thermalia), see [Setup](#setup). The status codes of the heat pump mean
+- **Heat pump controller** — WFA200 or ECR461, see [Setup](#setup) for
+  the models. The status codes of the heat pump mean
   different things on each; the **Status** sensor shows the same text for
   the same state on both. Switching to ECR461 disables the sensors for
   energy, power, COP and SPF, as it has no energy meters; switching back
-  to WFA enables them again. An installation set up before this option
-  existed gets the suggestion on its next start. The meaning of the error
-  codes is only known for the WFA so far.
+  to WFA200 enables them again. An installation set up before this option
+  existed gets the suggestion on its next start. The error codes mean the
+  same on both.
 - **Room temperature source** — see above, configurable per heating
   circuit.
 
