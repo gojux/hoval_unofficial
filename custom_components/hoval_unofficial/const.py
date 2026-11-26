@@ -1732,6 +1732,11 @@ def meters_present(options: Mapping[str, Any]) -> bool:
     """Whether the heat pump has energy meters."""
     return heat_pump_controller(options) != HEAT_PUMP_CONTROLLER_ECR461
 
+
+# Option: keys of the meter sensors the integration disabled for a controller
+# without energy meters, to enable them again with one that has them.
+CONF_DISABLED_METER_SENSORS = "disabled_meter_sensors"
+
 # --------------------------------------------------------------------------
 # SMART GRID REGISTERS
 #

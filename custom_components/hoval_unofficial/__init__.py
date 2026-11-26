@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from pathlib import Path
@@ -30,6 +30,7 @@ from .const import (
     COOLING_SENSOR_KEYS,
     CONF_DHW_BOTTOM_SENSOR,
     CONF_DHW_PRESENT,
+    CONF_DISABLED_METER_SENSORS,
     CONF_HEAT_PUMP_CONTROLLER,
     DHW_BOTTOM_TEMP_REGISTER,
     DHW_CURRENT_TEMP_REGISTER,
@@ -79,6 +80,7 @@ from .raise_control import (
     CoolingRaiseGuard,
     FlowSetpointRaiseControl,
     async_sync_flow_setpoint_raise,
+    heating_raise_store,
     suggestion_store,
 )
 from .room_temp import RoomTempWriter, async_cleanup_removed_entry
@@ -165,7 +167,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for reg in regs
     ):
         try:
-            circuit_options.update(await async_read_buffers(coordinator))
+            circuit_options.update(
+                await async_read_buffers(coordinator, entry.options)
+            )
         except UpdateFailed:
             pass
     if CONF_HEAT_PUMP_CONTROLLER not in entry.options:
@@ -177,14 +181,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             pass
         else:
             circuit_options[CONF_HEAT_PUMP_CONTROLLER] = controller
-            update_meter_sensors(
-                hass, entry, meters_present(circuit_options)
-            )
+            update_meter_sensors(hass, entry, circuit_options)
     if CONF_DHW_BOTTOM_SENSOR not in entry.options and dhw_present(
         {**entry.options, **circuit_options}
     ):
         try:
-            circuit_options.update(await async_read_dhw_bottom_sensor(coordinator))
+            circuit_options.update(
+                await async_read_dhw_bottom_sensor(coordinator, entry.options)
+            )
         except UpdateFailed:
             pass
     options = {**entry.options, **circuit_options}
@@ -205,7 +209,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator.flow_setpoint_raise = control
     if any(flow_setpoint_raise_offered(entry.options, hc) for hc in HEATING_CIRCUITS):
         guard = CoolingRaiseGuard(hass, coordinator, entry, coordinator.flow_setpoint_raise)
-        guard.async_start()
+        await guard.async_start()
         coordinator.raise_guard = guard
 
     for hc in present_circuits(entry.options):
@@ -293,18 +297,28 @@ async def async_suggest_heat_pump_controller(
     )
 
 
-def update_meter_sensors(hass: HomeAssistant, entry: ConfigEntry, meters: bool) -> None:
-    """After the heat pump's controller was set: without energy meters,
-    disables their sensors, which only read 0; with meters, enables those
-    the integration disabled again (the ones enabled by default)."""
+def update_meter_sensors(
+    hass: HomeAssistant, entry: ConfigEntry, options: dict[str, Any]
+) -> None:
+    """After the heat pump's controller was set in `options`, the options
+    about to be stored: without energy meters, disables their sensors, which
+    only read 0, and remembers which ones in `options`; with meters, enables
+    those the integration disabled again (the remembered ones and the ones
+    enabled by default)."""
     registry = er.async_get(hass)
-    if meters:
+    if meters_present(options):
+        remembered = options.pop(CONF_DISABLED_METER_SENSORS, [])
         _enable_sensors(
             hass,
             entry,
-            [key for key in METER_SENSOR_KEYS if _SENSORS_BY_KEY[key].enabled_default],
+            [
+                key
+                for key in METER_SENSOR_KEYS
+                if key in remembered or _SENSORS_BY_KEY[key].enabled_default
+            ],
         )
         return
+    disabled: list[str] = list(options.get(CONF_DISABLED_METER_SENSORS, []))
     for key in METER_SENSOR_KEYS:
         entity_id = registry.async_get_entity_id(
             Platform.SENSOR, DOMAIN, f"{entry.entry_id}_{key}"
@@ -316,6 +330,9 @@ def update_meter_sensors(hass: HomeAssistant, entry: ConfigEntry, meters: bool) 
             registry.async_update_entity(
                 entity_id, disabled_by=er.RegistryEntryDisabler.INTEGRATION
             )
+            if key not in disabled:
+                disabled.append(key)
+    options[CONF_DISABLED_METER_SENSORS] = disabled
 
 
 def _enable_sensors(
@@ -394,16 +411,22 @@ async def _async_detect_present(
     return options
 
 
-async def async_read_buffers(coordinator: HovalModbusCoordinator) -> dict[str, bool]:
+async def async_read_buffers(
+    coordinator: HovalModbusCoordinator, stored: Mapping[str, Any]
+) -> dict[str, bool]:
     """Which buffer modules (PS) the heat pump has, and whether it has a
     buffer sensor (WPF), as options to store. A register the controller
-    doesn't answer for counts as missing. Raises UpdateFailed."""
+    doesn't answer for counts as missing; what `stored`, the options stored
+    so far, tells about a register decides how it is asked (see
+    async_read_value_if_present). Raises UpdateFailed."""
     options: dict[str, bool] = {}
     for unit_id, regs in BUFFER_MODULE_TEMP_REGISTERS.items():
         found = [
             temp_sensor_plausible(
                 await coordinator.async_read_value_if_present(
-                    reg, unanswered_absent=True
+                    reg,
+                    unanswered_absent=True,
+                    found_before=stored.get(buffer_sensor_found_key(reg)),
                 )
             )
             for reg in regs
@@ -418,22 +441,26 @@ async def async_read_buffers(coordinator: HovalModbusCoordinator) -> dict[str, b
     )
     options[CONF_BUFFER_SENSOR] = bool(
         await coordinator.async_read_value_if_present(
-            BUFFER_SENSOR_REGISTER, unanswered_absent=True
+            BUFFER_SENSOR_REGISTER,
+            unanswered_absent=True,
+            found_before=stored.get(CONF_BUFFER_SENSOR),
         )
     )
     return options
 
 
 async def async_read_dhw_bottom_sensor(
-    coordinator: HovalModbusCoordinator,
+    coordinator: HovalModbusCoordinator, stored: Mapping[str, Any]
 ) -> dict[str, bool]:
     """Whether the hot water tank has a sensor at the bottom (SF2), as an
     option to store. A register the controller doesn't answer for counts as
-    missing. Raises UpdateFailed."""
+    missing; `stored` as in async_read_buffers. Raises UpdateFailed."""
     return {
         CONF_DHW_BOTTOM_SENSOR: temp_sensor_plausible(
             await coordinator.async_read_value_if_present(
-                DHW_BOTTOM_TEMP_REGISTER, unanswered_absent=True
+                DHW_BOTTOM_TEMP_REGISTER,
+                unanswered_absent=True,
+                found_before=stored.get(CONF_DHW_BOTTOM_SENSOR),
             )
         )
     }
@@ -466,3 +493,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     what it stored."""
     await async_cleanup_removed_entry(hass, entry)
     await suggestion_store(hass, entry.entry_id).async_remove()
+    await heating_raise_store(hass, entry.entry_id).async_remove()

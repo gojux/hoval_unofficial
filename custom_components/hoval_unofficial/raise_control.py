@@ -72,6 +72,13 @@ def suggestion_store(hass: HomeAssistant, entry_id: str) -> Store:
     return Store(hass, _STORE_VERSION, f"{DOMAIN}.flow_setpoint_raise_{entry_id}")
 
 
+def heating_raise_store(hass: HomeAssistant, entry_id: str) -> Store:
+    """Where the raises from before cooling are kept (see CoolingRaiseGuard)."""
+    return Store(
+        hass, _STORE_VERSION, f"{DOMAIN}.flow_setpoint_raise_heating_{entry_id}"
+    )
+
+
 class FlowSetpointRaiseControl:
     """Suggestion and automatic adjustment of the flow setpoint raise."""
 
@@ -188,6 +195,10 @@ class CoolingRaiseGuard:
     (flow_setpoint_raise_previous_key) is written back, the automatic
     adjustment paused and the number entity refuses changes; once the circuit
     heats again, the raise from before cooling is written back.
+
+    The raise from before cooling is kept in a Store until it has been
+    written back, so it survives a restart while the circuit cools and a
+    failed write, which is tried again on the next poll.
     """
 
     def __init__(
@@ -208,13 +219,23 @@ class CoolingRaiseGuard:
         ]
         # Keys of the circuits in cooling operation.
         self._cooling: set[str] = set()
-        # Raise of each circuit before it started cooling.
+        # Raise of each circuit before it started cooling, until it has been
+        # written back.
         self._heating_raises: dict[str, float] = {}
+        self._store = heating_raise_store(hass, entry.entry_id)
         self._busy: set[str] = set()
         self._remove_listener: CALLBACK_TYPE | None = None
 
-    @callback
-    def async_start(self) -> None:
+    async def async_start(self) -> None:
+        stored = await self._store.async_load() or {}
+        keys = {hc.key for hc, _ in self._circuits}
+        # Without the circuits whose raise is no longer offered: theirs was
+        # set back to the installer's (async_sync_flow_setpoint_raise).
+        self._heating_raises = {
+            key: value for key, value in stored.items() if key in keys
+        }
+        if self._heating_raises != stored:
+            await self._async_save()
         context = [
             key for hc, reg in self._circuits for key in (hc.status_reg.key, reg.key)
         ]
@@ -249,7 +270,9 @@ class CoolingRaiseGuard:
             current = data.get(reg.key)
             if cooling and hc.key not in self._cooling:
                 self._cooling.add(hc.key)
-                if current is not None:
+                # One still remembered is from before cooling (restart while
+                # cooling); the current one is then the installer's.
+                if current is not None and hc.key not in self._heating_raises:
                     self._heating_raises[hc.key] = current
                 self._run(hc, self._async_hold(hc, reg, pause=True))
             elif (
@@ -259,7 +282,11 @@ class CoolingRaiseGuard:
             ):
                 # Changed while cooling, e.g. at the controller.
                 self._run(hc, self._async_hold(hc, reg, pause=False))
-            elif not cooling and hc.key in self._cooling:
+            elif not cooling and (
+                hc.key in self._cooling or hc.key in self._heating_raises
+            ):
+                # Also a raise not written back yet: after a restart, or
+                # when writing it failed.
                 self._cooling.discard(hc.key)
                 self._run(hc, self._async_release(hc, reg))
 
@@ -283,8 +310,11 @@ class CoolingRaiseGuard:
     async def _async_hold(
         self, hc: HeatingCircuit, reg: RegisterDef, pause: bool
     ) -> None:
-        if pause and hc is HEATING_CIRCUIT_1 and self._control is not None:
-            await self._control.async_pause()
+        if pause:
+            if hc is HEATING_CIRCUIT_1 and self._control is not None:
+                await self._control.async_pause()
+            # Before the raise from before cooling is overwritten.
+            await self._async_save()
         value = self._installer_raise(hc)
         _LOGGER.info(
             "%s cools: flow setpoint raise set back to %s K", hc.key, value
@@ -292,13 +322,19 @@ class CoolingRaiseGuard:
         await self._coordinator.async_write_value(reg, value, refresh=False)
 
     async def _async_release(self, hc: HeatingCircuit, reg: RegisterDef) -> None:
-        value = self._heating_raises.pop(hc.key, None)
+        value = self._heating_raises.get(hc.key)
         if value is not None:
             _LOGGER.info("%s heats again: flow setpoint raise %s K", hc.key, value)
+            # If this fails, the raise stays remembered and the automatic
+            # adjustment paused until the next poll tries again.
             await self._coordinator.async_write_value(reg, value, refresh=False)
+            del self._heating_raises[hc.key]
+            await self._async_save()
         if hc is HEATING_CIRCUIT_1 and self._control is not None:
             self._control.resume()
 
+    async def _async_save(self) -> None:
+        await self._store.async_save(dict(self._heating_raises))
 
 
 async def async_sync_flow_setpoint_raise(

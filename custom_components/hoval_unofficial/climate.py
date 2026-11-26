@@ -538,9 +538,18 @@ class HovalRoomClimate(
         settable temperature -- callers must handle that (see
         async_set_temperature()). While cooling weather compensated, the
         cooling room setpoint of the mode, only with the experimental
-        function (otherwise None: shown, not written)."""
+        function and if the controller has it (otherwise None: shown, not
+        written; without the register the current room setpoint is shown,
+        see _displayed_setpoint_reg)."""
         if self._weather_cooling_active():
-            return self._cooling_setpoint_reg() if self._cooling_enabled else None
+            reg = self._cooling_setpoint_reg()
+            if (
+                not self._cooling_enabled
+                or reg is None
+                or self.coordinator.data.get(reg.key) is None
+            ):
+                return None
+            return reg
         if self.hvac_mode == HVACMode.HEAT:
             return self._hc.write_normal_setpoint_reg
         if self.hvac_mode == HVACMode.AUTO and self.preset_mode == PRESET_ECO:

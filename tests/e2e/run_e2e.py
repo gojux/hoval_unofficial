@@ -1128,6 +1128,9 @@ def check_flow_setpoint_raise(token: str, entry_id: str) -> None:
         pass
     else:
         raise SystemExit("The raise could be changed while the circuit cools")
+    # The raise from before cooling is kept across a reload.
+    request("POST", f"/api/config/config_entries/entry/{entry_id}/reload", token=token)
+    wait_until_polling(token)
     write_sim(STATUS_HC1, 1)
     expect_sim(FLOW_SETPOINT_RAISE_HC1, 13, timeout=45)
     print("OK: while cooling, the raise found on the controller applies, then the one from before")

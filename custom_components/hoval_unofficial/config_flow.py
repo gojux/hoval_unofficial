@@ -77,7 +77,6 @@ from .const import (
     flow_setpoint_raise_bound_keys,
     flow_setpoint_raise_bounds,
     heat_pump_controller,
-    meters_present,
     previous_strategy_key,
     room_influence_enabled,
 )
@@ -338,7 +337,9 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         if key not in CONNECTION_OPTIONS
                     }
                     options.update(user_input.get(SECTION_ADVANCED, {}))
-                    return self.async_update_reload_and_abort(
+                    # Reloaded by the entry's update listener if anything
+                    # changed.
+                    return self.async_update_and_abort(
                         reconfigure_entry,
                         title=name,
                         unique_id=new_unique_id,
@@ -426,7 +427,9 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="not_loaded")
         # With a buffer module, the flow setpoint raise isn't offered (Hoval).
         try:
-            buffer_modules = await async_read_buffers(coordinator)
+            buffer_modules = await async_read_buffers(
+                coordinator, self.config_entry.options
+            )
         except UpdateFailed:
             return self.async_abort(reason="cannot_read")
         buffer_module = buffer_modules[CONF_BUFFER_MODULE]
@@ -637,9 +640,7 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
                 if heat_pump_controller(options) != heat_pump_controller(
                     self.config_entry.options
                 ):
-                    update_meter_sensors(
-                        self.hass, self.config_entry, meters_present(options)
-                    )
+                    update_meter_sensors(self.hass, self.config_entry, options)
                 return self.async_create_entry(title="", data=options)
             errors["base"] = "room_influence_sending"
             placeholders["circuits"] = _circuit_numbers(sending)
@@ -674,7 +675,11 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
         if coordinator is None or not dhw_present(options):
             return
         try:
-            options.update(await async_read_dhw_bottom_sensor(coordinator))
+            options.update(
+                await async_read_dhw_bottom_sensor(
+                    coordinator, self.config_entry.options
+                )
+            )
         except UpdateFailed as err:
             _LOGGER.warning("Looking for the hot water bottom sensor failed: %s", err)
 

@@ -244,10 +244,12 @@ async def read_registers(
     )
 
 
-async def read_register(unit: ModbusUnit, reg: RegisterDef) -> float:
+async def read_register(
+    unit: ModbusUnit, reg: RegisterDef, attempts: int = REQUEST_ATTEMPTS
+) -> float:
     """Reads a single register's value. Raises ModbusError on failure."""
     registers = await read_registers(
-        unit, reg.register_type, reg.address, reg.register_count
+        unit, reg.register_type, reg.address, reg.register_count, attempts
     )
     return decode_value(registers, reg.data_type) * reg.scale
 
@@ -506,17 +508,33 @@ class HovalModbusCoordinator(DataUpdateCoordinator[dict[str, float]]):
         return offset if offset is not None else 0.0
 
     async def async_read_value_if_present(
-        self, reg: RegisterDef, unanswered_absent: bool = False
+        self,
+        reg: RegisterDef,
+        unanswered_absent: bool = False,
+        found_before: bool | None = None,
     ) -> float | None:
         """Reads a register directly; None if the controller answers that it
         doesn't have it, or, with `unanswered_absent`, doesn't answer for it
         while it still answers other requests (as in polling). Raises
-        UpdateFailed on other errors. With `unanswered_absent`, a register
-        polling already left out as unreadable isn't asked again."""
-        if unanswered_absent and reg.key in self._unreadable:
-            return None
+        UpdateFailed on other errors.
+
+        With `unanswered_absent`, `found_before` tells what is stored about
+        the register, so that a single failed request doesn't make something
+        found before count as missing:
+        - True: always asked, with all attempts, also while polling leaves it
+          out as unreadable (which a single error response causes).
+        - False: asked with a single attempt, as not answering is expected;
+          not at all while polling leaves it out.
+        - None: asked with all attempts, unless polling leaves it out.
+        """
+        attempts = REQUEST_ATTEMPTS
+        if unanswered_absent and not found_before:
+            if reg.key in self._unreadable:
+                return None
+            if found_before is False:
+                attempts = 1
         try:
-            return await read_register(self.unit, reg)
+            return await read_register(self.unit, reg, attempts)
         except ModbusExceptionError:
             return None
         except FAILED_ANSWER_ERRORS as err:

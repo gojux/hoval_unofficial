@@ -124,7 +124,10 @@ integration. For installation and usage as an end user, see
   remembered raise (`flow_setpoint_raise_previous_key`, 0 without one) and
   keeps it there, pausing heating circuit 1's automatic adjustment; the
   raise number refuses changes meanwhile. Once the circuit heats again, the
-  raise from before cooling is written back and the adjustment resumed
+  raise from before cooling is written back and the adjustment resumed. The
+  raise from before cooling is kept in a `Store` (`heating_raise_store`,
+  removed with the entry) until it has been written back, so it survives a
+  restart while cooling; a failed write back is tried again on the next poll
 - `number.py` – creates writable HA entities from `NUMBER_REGISTERS`; some
   only under conditions: the flow setpoint raises (`flow_setpoint_raise_offered`,
   range from `flow_setpoint_raise_bounds`), the buffer Smart Grid offsets per
@@ -188,9 +191,14 @@ an error response counts): some controllers don't answer at all for a
 register they don't have. Without an answer to either probe the poll fails.
 Reading the buffer registers for the buffer detection follows the same
 rule (`async_read_value_if_present(..., unanswered_absent=True)`): a
-register without an answer counts as missing. A register polling already left out
-as unreadable isn't asked again there, so the experimental functions open
-right away. The optional gap between requests (`CONF_MESSAGE_SPACING`, ms)
+register without an answer counts as missing. How a register is asked
+depends on what is stored about it (`found_before`): one found before is
+always asked with all attempts, also while polling leaves it out as
+unreadable, so a single failed request doesn't make a found buffer module
+or sensor count as missing; one not found before is asked with a single
+attempt and not at all while polling leaves it out, so the forms open and
+save quickly. The same goes for the hot water bottom sensor looked for when
+the installation options are saved. The optional gap between requests (`CONF_MESSAGE_SPACING`, ms)
 is passed to `set_message_spacing` of the shared connection only when set,
 and set back to 0 on unload. A register that can't be read either
 way is left out of the block reads, logged once as a warning, and tried
@@ -298,8 +306,9 @@ and electrical energy (25613) are. It is asked in the config flow's
 `controller` step (read through a temporary Modbus unit), stored at the
 first start for older entries, and changed under Options -> Installation.
 `update_meter_sensors` runs only when the value is set or changed:
-switching to ECR461 disables the enabled meter sensors, switching to WFA
-enables those disabled by the integration that are enabled by default, so
+switching to ECR461 disables the enabled meter sensors and remembers
+their keys (`CONF_DISABLED_METER_SENSORS`), switching to WFA enables those
+disabled by the integration that are remembered or enabled by default, so
 a sensor the user enabled again stays enabled.
 
 Every platform adds its entities through `coordinator.add_entities`, which
@@ -367,8 +376,10 @@ device ID at setup and in the reconfigure step (three-dot menu ->
 "Reconfigure"). Polling interval, timeout and gap between requests
 (`CONNECTION_OPTIONS`) are only in the reconfigure step's collapsed
 `section()` "advanced"; they are stored in the **options**, which
-`async_update_reload_and_abort(..., options=...)` writes together with the
-data. An emptied field goes back to its default. Entries set up by older
+`async_update_and_abort(..., options=...)` writes together with the
+data; the entry's update listener then reloads it if anything changed (Home
+Assistant no longer allows `async_update_reload_and_abort` for an entry
+with an update listener from 2026.12). An emptied field goes back to its default. Entries set up by older
 versions may still hold `scan_interval` in their data; `__init__.py` falls
 back to it, and the reconfigure step moves it to the options.
 

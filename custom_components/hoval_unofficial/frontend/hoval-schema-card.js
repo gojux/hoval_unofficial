@@ -164,6 +164,10 @@ const CIRCUIT_PITCH = 175;
 const FLOW_Y = 85;
 const RETURN_Y = 160;
 
+// After loading the schema failed, e.g. while the integration is still
+// starting, it is tried again at most this often.
+const LOAD_RETRY_MS = 10000;
+
 const esc = (value) =>
   String(value).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
@@ -173,6 +177,7 @@ class HovalSchemaCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._schema = null;
     this._error = null;
+    this._retryAt = 0;
     this._loading = false;
     this._changes = {};
     this._changesTimer = null;
@@ -194,6 +199,7 @@ class HovalSchemaCard extends HTMLElement {
   setConfig(config) {
     this._config = { ...config };
     this._schema = null;
+    this._error = null;
     this._changes = {};
     this._stopChanges();
     this._renderKey = null;
@@ -201,7 +207,7 @@ class HovalSchemaCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._schema && !this._loading && !this._error) this._load();
+    if (!this._schema && !this._loading && (!this._error || Date.now() >= this._retryAt)) this._load();
     this._render();
   }
 
@@ -224,17 +230,28 @@ class HovalSchemaCard extends HTMLElement {
   }
 
   async _load() {
+    const config = this._config;
     this._loading = true;
+    let schema = null;
+    let error = null;
     try {
       const msg = { type: "hoval_unofficial/schema" };
-      if (this._config && this._config.entry_id) msg.entry_id = this._config.entry_id;
-      this._schema = await this._hass.callWS(msg);
-      this._schema.entities = this._schema.entities || {};
-      this._scheduleChanges();
+      if (config && config.entry_id) msg.entry_id = config.entry_id;
+      schema = await this._hass.callWS(msg);
+      schema.entities = schema.entities || {};
     } catch (err) {
-      this._error = err;
+      error = err;
     }
     this._loading = false;
+    // The configuration changed meanwhile: the answer is for the previous one.
+    if (config !== this._config) {
+      this._load();
+      return;
+    }
+    this._schema = schema;
+    this._error = error;
+    if (error) this._retryAt = Date.now() + LOAD_RETRY_MS;
+    else if (this.isConnected) this._scheduleChanges();
     this._renderKey = null;
     this._render();
   }
