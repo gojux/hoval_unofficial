@@ -296,7 +296,7 @@ No register tells the controllers apart; `suggest_heat_pump_controller`
 suggests ECR461 when the operating hours aren't 0 but heat quantity (1505)
 and electrical energy (25613) are. It is asked in the config flow's
 `controller` step (read through a temporary Modbus unit), stored at the
-first start for older entries, and changed under Options -> General.
+first start for older entries, and changed under Options -> Installation.
 `update_meter_sensors` runs only when the value is set or changed:
 switching to ECR461 disables the enabled meter sensors, switching to WFA
 enables those disabled by the integration that are enabled by default, so
@@ -358,20 +358,30 @@ independently of the chosen source, and only switching room influence on is reme
 nothing sent is refused (`room_influence_without_temperature`): the room
 register would hold 0, and how the controller takes 0 is not known.
 
-Changing any of these options reloads the config entry automatically
-(same mechanism as changing `scan_interval`).
+Changing any of these options reloads the config entry automatically.
 
-## Options flow: sections and the "can't clear an entity" trap
+## Connection and installation: where each setting lives
 
-The options form is grouped into four collapsible **sections**
-(`homeassistant.data_entry_flow.section`): "General" (polling interval)
-and one per heating circuit. Home Assistant nests submitted data by
-section (`{"general": {...}, "heating_circuit_1": {...}, ...}`), so
-`async_step_init()` flattens it back into the flat key structure the rest
-of the integration expects (`const.py`'s `current_temp_source_key()` /
-`current_temp_entity_key()`, `__init__.py`, `climate.py`) before saving.
+The connection is set in the config flow: name, IP address, port and
+device ID at setup and in the reconfigure step (three-dot menu ->
+"Reconfigure"). Polling interval, timeout and gap between requests
+(`CONNECTION_OPTIONS`) are only in the reconfigure step's collapsed
+`section()` "advanced"; they are stored in the **options**, which
+`async_update_reload_and_abort(..., options=...)` writes together with the
+data. An emptied field goes back to its default. Entries set up by older
+versions may still hold `scan_interval` in their data; `__init__.py` falls
+back to it, and the reconfigure step moves it to the options.
 
-Two related pitfalls worth knowing if you extend this form:
+Port and device ID use a `NumberSelector` in box mode: Home Assistant shows
+an integer field with a small range (like the device ID's 0-247) as a
+slider otherwise. The selector returns a float, so `_connection()` turns
+them into int.
+
+The options flow is a menu: "Installation" (step `general`: controller,
+heating circuit 2/3 and hot water present), one form per present heating
+circuit, and the experimental functions.
+
+Two pitfalls worth knowing when extending these forms:
 
 - **Never use `vol.Optional(key, default=...)` for a field the user
   should be able to clear** (e.g. the entity picker's "X" button). With
@@ -381,13 +391,9 @@ Two related pitfalls worth knowing if you extend this form:
   remove a previously selected value. Use
   `description={"suggested_value": ...}` instead, which only pre-fills
   the form without that side effect.
-- **`add_suggested_values_to_schema()` does not recurse into
-  `section()`-wrapped fields** (see
-  [home-assistant/frontend#22419](https://github.com/home-assistant/frontend/issues/22419)).
-  For fields inside a section, set
-  `description={"suggested_value": ...}` directly on the `vol.Optional(...)`
-  marker when building that section's inner schema, rather than relying
-  on the helper.
+- **Submitted data is nested by `section()`** (`{"advanced": {...}}`), and
+  `add_suggested_values_to_schema()` expects the suggested values nested
+  the same way.
 
 ## Room heating circuits: HVAC mode vs. preset mode
 

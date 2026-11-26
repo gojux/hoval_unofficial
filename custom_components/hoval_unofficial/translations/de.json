@@ -8,13 +8,12 @@
           "name": "Name",
           "host": "IP-Adresse",
           "port": "Port",
-          "device_id": "Modbus-Geräte-ID",
-          "scan_interval": "Abfrageintervall (Sekunden)"
+          "device_id": "Modbus-Geräte-ID"
         }
       },
       "controller": {
         "title": "Wärmepumpen-Regler",
-        "description": "Vom Regler der Wärmepumpe hängt ab, was ihre Status-Codes bedeuten und ob sie Energiezähler hat. Kein Register verrät ihn; der Vorschlag beruht auf den Energiezählern. Später änderbar unter Optionen -> Allgemein.",
+        "description": "Vom Regler der Wärmepumpe hängt ab, was ihre Status-Codes bedeuten und ob sie Energiezähler hat. Kein Register verrät ihn; der Vorschlag beruht auf den Energiezählern. Später änderbar unter Optionen -> Anlage.",
         "data": {
           "heat_pump_controller": "Wärmepumpen-Regler"
         }
@@ -27,6 +26,22 @@
           "host": "IP-Adresse",
           "port": "Port",
           "device_id": "Modbus-Geräte-ID"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Erweitert",
+            "description": "Abfrageintervall, Timeout und Abstand zwischen Anfragen. Die Standardwerte passen für die meisten Anlagen.",
+            "data": {
+              "scan_interval": "Abfrageintervall (Sekunden)",
+              "timeout": "Modbus-Timeout pro Anfrage (Sekunden)",
+              "message_spacing": "Abstand zwischen Modbus-Anfragen (Millisekunden)"
+            },
+            "data_description": {
+              "scan_interval": "Empfohlen: 20 Sekunden oder weniger. Das Hoval-Gateway lässt länger ungenutzte Verbindungen fallen, danach dauert jede Abfrage einige Sekunden länger.",
+              "timeout": "Standard: 3 s. Teilen sich mehrere Integrationen das Gateway, gilt der längste Timeout.",
+              "message_spacing": "Standard: 0 (kein Abstand). Kann helfen, wenn das Gateway direkt aufeinanderfolgende Anfragen manchmal nicht beantwortet. Gilt für alle Anfragen an diese Geräte-ID über die geteilte Verbindung, auch die anderer Integrationen, und verlängert jede Abfrage."
+            }
+          }
         }
       }
     },
@@ -44,7 +59,7 @@
       "init": {
         "title": "Optionen",
         "menu_options": {
-          "general": "Allgemein",
+          "general": "Anlage",
           "heating_circuit_1": "Heizkreis 1",
           "heating_circuit_2": "Heizkreis 2",
           "heating_circuit_3": "Heizkreis 3",
@@ -52,24 +67,17 @@
         }
       },
       "general": {
-        "title": "Allgemein",
+        "title": "Anlage",
+        "description": "Ohne Haken legt die Integration für diesen Teil der Anlage keine Entitäten an und liest und schreibt keine Werte dafür.",
         "data": {
-          "scan_interval": "Abfrageintervall (Sekunden)",
-          "timeout": "Modbus-Timeout pro Anfrage (Sekunden)",
-          "message_spacing": "Abstand zwischen Modbus-Anfragen (Millisekunden)",
+          "heat_pump_controller": "Wärmepumpen-Regler",
           "heating_circuit_2_present": "Heizkreis 2 vorhanden",
           "heating_circuit_3_present": "Heizkreis 3 vorhanden",
-          "dhw_present": "Warmwasser vorhanden",
-          "heat_pump_controller": "Wärmepumpen-Regler"
+          "dhw_present": "Warmwasser vorhanden"
         },
         "data_description": {
-          "scan_interval": "Empfohlen: 20 Sekunden oder weniger. Das Hoval-Gateway lässt länger ungenutzte Verbindungen fallen, danach dauert jede Abfrage einige Sekunden länger.",
-          "timeout": "Standard: 3 s. Teilen sich mehrere Integrationen das Gateway, gilt der längste Timeout.",
-          "message_spacing": "Standard: 0 (kein Abstand). Kann helfen, wenn das Gateway direkt aufeinanderfolgende Anfragen manchmal nicht beantwortet. Gilt für alle Anfragen an diese Geräte-ID über die geteilte Verbindung, auch die anderer Integrationen, und verlängert jede Abfrage.",
-          "heating_circuit_2_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
-          "heating_circuit_3_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür.",
-          "dhw_present": "Ohne Haken legt die Integration keine Entitäten dafür an und liest und schreibt keine Werte dafür. Beim Speichern sucht sie außerdem einen zweiten Fühler unten im Warmwasserspeicher, z. B. einen nachgerüsteten.",
-          "heat_pump_controller": "Bestimmt, was die Status-Codes der Wärmepumpe bedeuten. Ohne Energiezähler (ECR461) werden die Sensoren für Energie, Leistung, COP und JAZ deaktiviert; zurück auf WFA200 werden sie wieder aktiviert."
+          "heat_pump_controller": "Wähle den Regler passend zu deinem Wärmepumpen-Modell; bei der Einrichtung wurde einer anhand der Energiezähler vorgeschlagen. Ohne Energiezähler (ECR461) werden die Sensoren für Energie, Leistung, COP und JAZ deaktiviert; zurück auf WFA200 werden sie wieder aktiviert.",
+          "dhw_present": "Nach Änderungen am Warmwasserspeicher einmal speichern, um die Warmwasser-Sensoren neu zu erkennen."
         }
       },
       "circuit": {
@@ -678,8 +686,8 @@
     },
     "heat_pump_controller": {
       "options": {
-        "wfa": "WFA200 – Belaria pro, UltraSource, Thermalia 43er Serie (mit Energiezählern)",
-        "ecr461": "ECR461 – Thermalia comfort/twin/dual, Belaria compact IR/twin/dual (ohne Energiezähler)"
+        "wfa": "WFA200 – Belaria pro, UltraSource, Thermalia 43er Serie",
+        "ecr461": "ECR461 – Thermalia comfort/twin/dual, Belaria compact IR/twin/dual"
       }
     }
   },

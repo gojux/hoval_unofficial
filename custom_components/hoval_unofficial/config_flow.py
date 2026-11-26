@@ -15,7 +15,7 @@ from homeassistant.const import (
     CONF_TIMEOUT,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import FlowResult, section
 from homeassistant.helpers import selector
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -104,31 +104,73 @@ FIELD_ACCEPT_RISKS = "accept_risks"
 SCAN_INTERVAL_VALIDATOR = vol.All(
     vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
 )
-PORT_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
+TIMEOUT_VALIDATOR = vol.All(
+    vol.Coerce(float), vol.Range(min=MIN_TIMEOUT, max=MAX_TIMEOUT)
+)
+MESSAGE_SPACING_VALIDATOR = vol.All(
+    vol.Coerce(int), vol.Range(min=0, max=MAX_MESSAGE_SPACING)
+)
+
+
+def _number_box(minimum: int, maximum: int) -> selector.NumberSelector:
+    """A plain input field; a small range would otherwise show a slider."""
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=minimum, max=maximum, step=1, mode=selector.NumberSelectorMode.BOX
+        )
+    )
+
+
+PORT_SELECTOR = _number_box(1, 65535)
 # Modbus addresses 1-247; 0 is accepted since some gateways answer on it.
-DEVICE_ID_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=0, max=247))
+DEVICE_ID_SELECTOR = _number_box(0, 247)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
         vol.Required(CONF_HOST): str,
-        vol.Required(CONF_PORT, default=DEFAULT_PORT): PORT_VALIDATOR,
-        vol.Required(CONF_DEVICE_ID, default=DEFAULT_DEVICE_ID): DEVICE_ID_VALIDATOR,
-        vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): SCAN_INTERVAL_VALIDATOR,
+        vol.Required(CONF_PORT, default=DEFAULT_PORT): PORT_SELECTOR,
+        vol.Required(CONF_DEVICE_ID, default=DEFAULT_DEVICE_ID): DEVICE_ID_SELECTOR,
     }
 )
 
-# Same fields as STEP_USER_DATA_SCHEMA minus scan_interval, which stays the
-# sole responsibility of the options flow (HovalUnofficialOptionsFlow) to
-# avoid two different places editing the same value.
-STEP_RECONFIGURE_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
-        vol.Required(CONF_HOST): str,
-        vol.Required(CONF_PORT, default=DEFAULT_PORT): PORT_VALIDATOR,
-        vol.Required(CONF_DEVICE_ID, default=DEFAULT_DEVICE_ID): DEVICE_ID_VALIDATOR,
+# Polling interval, timeout and gap: stored in the options, edited only in
+# the reconfigure step's collapsed section.
+SECTION_ADVANCED = "advanced"
+CONNECTION_OPTIONS = (CONF_SCAN_INTERVAL, CONF_TIMEOUT, CONF_MESSAGE_SPACING)
+
+
+def _connection(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Name, host, port and device ID, with the numbers as int."""
+    return {
+        CONF_NAME: user_input[CONF_NAME],
+        CONF_HOST: user_input[CONF_HOST],
+        CONF_PORT: int(user_input[CONF_PORT]),
+        CONF_DEVICE_ID: int(user_input[CONF_DEVICE_ID]),
     }
-)
+
+
+def _reconfigure_schema() -> vol.Schema:
+    advanced: dict[Any, Any] = {
+        vol.Optional(CONF_SCAN_INTERVAL): SCAN_INTERVAL_VALIDATOR,
+    }
+    # Only offered where Home Assistant's Modbus connection takes a request
+    # timeout; otherwise its default applies.
+    # HA-COMPAT(2026.10): always offer the field.
+    if timeout_supported():
+        advanced[vol.Optional(CONF_TIMEOUT)] = TIMEOUT_VALIDATOR
+    advanced[vol.Optional(CONF_MESSAGE_SPACING)] = MESSAGE_SPACING_VALIDATOR
+    return vol.Schema(
+        {
+            vol.Required(CONF_NAME): str,
+            vol.Required(CONF_HOST): str,
+            vol.Required(CONF_PORT): PORT_SELECTOR,
+            vol.Required(CONF_DEVICE_ID): DEVICE_ID_SELECTOR,
+            vol.Required(SECTION_ADVANCED): section(
+                vol.Schema(advanced), {"collapsed": True}
+            ),
+        }
+    )
 
 
 CONTROLLER_SELECTOR = selector.SelectSelector(
@@ -199,10 +241,10 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            name = user_input[CONF_NAME]
-            host = user_input[CONF_HOST]
-            port = user_input[CONF_PORT]
-            device_id = user_input[CONF_DEVICE_ID]
+            data = _connection(user_input)
+            host = data[CONF_HOST]
+            port = data[CONF_PORT]
+            device_id = data[CONF_DEVICE_ID]
 
             # Prevent setting up the same controller twice
             unique_id = f"{host}:{port}:{device_id}"
@@ -213,7 +255,7 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not connection_ok:
                 errors["base"] = "cannot_connect"
             else:
-                self._data = user_input
+                self._data = data
                 self._suggested_controller = await suggest_controller(
                     self.hass, host, port, device_id
                 )
@@ -249,20 +291,22 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Let the user change name, IP address, port and device ID after setup.
+        """Let the user change the connection after setup: name, IP address,
+        port, device ID and, in a collapsed section, polling interval,
+        timeout and gap between requests.
 
-        Reachable via the entry's three-dot menu -> "Reconfigure". Doesn't
-        touch `scan_interval` or the heating-circuit temperature-source
-        settings, which are handled by the options flow below.
+        Reachable via the entry's three-dot menu -> "Reconfigure". The
+        installation itself is set in the options flow below.
         """
         errors: dict[str, str] = {}
         reconfigure_entry = self._get_reconfigure_entry()
 
         if user_input is not None:
-            name = user_input[CONF_NAME]
-            host = user_input[CONF_HOST]
-            port = user_input[CONF_PORT]
-            device_id = user_input[CONF_DEVICE_ID]
+            connection = _connection(user_input)
+            name = connection[CONF_NAME]
+            host = connection[CONF_HOST]
+            port = connection[CONF_PORT]
+            device_id = connection[CONF_DEVICE_ID]
 
             connection_ok = await test_connection(self.hass, host, port, device_id)
             if not connection_ok:
@@ -284,17 +328,44 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if conflict is not None:
                     errors["base"] = "already_configured"
                 else:
+                    data = {**reconfigure_entry.data, **connection}
+                    # Set at setup by older versions; the options hold it now.
+                    data.pop(CONF_SCAN_INTERVAL, None)
+                    # An emptied field goes back to its default.
+                    options = {
+                        key: value
+                        for key, value in reconfigure_entry.options.items()
+                        if key not in CONNECTION_OPTIONS
+                    }
+                    options.update(user_input.get(SECTION_ADVANCED, {}))
                     return self.async_update_reload_and_abort(
                         reconfigure_entry,
                         title=name,
                         unique_id=new_unique_id,
-                        data={**reconfigure_entry.data, **user_input},
+                        data=data,
+                        options=options,
                     )
 
+        if user_input is None:
+            entry_data = reconfigure_entry.data
+            entry_options = reconfigure_entry.options
+            user_input = {
+                **entry_data,
+                SECTION_ADVANCED: {
+                    CONF_SCAN_INTERVAL: entry_options.get(
+                        CONF_SCAN_INTERVAL,
+                        entry_data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                    ),
+                    CONF_TIMEOUT: entry_options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+                    CONF_MESSAGE_SPACING: entry_options.get(
+                        CONF_MESSAGE_SPACING, DEFAULT_MESSAGE_SPACING
+                    ),
+                },
+            }
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                STEP_RECONFIGURE_DATA_SCHEMA, reconfigure_entry.data
+                _reconfigure_schema(), user_input
             ),
             errors=errors,
         )
@@ -307,8 +378,10 @@ class HovalUnofficialConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
-    """Allows changing the polling interval and, per heating circuit, where
-    its room temperature comes from and whether it is sent to the controller.
+    """Allows changing the installation (controller, which heating circuits
+    and hot water are there) and, per heating circuit, where its room
+    temperature comes from and whether it is sent to the controller. The
+    connection is changed in the config flow's reconfigure step.
 
     Each menu entry is its own form that ends the flow when submitted. The
     forms of the heating circuits depend on what is read from the controller
@@ -549,12 +622,7 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         placeholders = {"circuits": ""}
         if user_input is not None:
-            options = dict(self.config_entry.options)
-            options.pop(CONF_SCAN_INTERVAL, None)
-            # An emptied timeout field goes back to DEFAULT_TIMEOUT.
-            options.pop(CONF_TIMEOUT, None)
-            options.pop(CONF_MESSAGE_SPACING, None)
-            options.update(user_input)
+            options = {**self.config_entry.options, **user_input}
             # A circuit that sends a room temperature has to stop first, in
             # its own form.
             sending = [
@@ -576,41 +644,12 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
             errors["base"] = "room_influence_sending"
             placeholders["circuits"] = _circuit_numbers(sending)
 
-        current_scan_interval = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL,
-            self.config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        )
-        schema: dict[Any, Any] = {
-            vol.Optional(
-                CONF_SCAN_INTERVAL,
-                description={"suggested_value": current_scan_interval},
-            ): SCAN_INTERVAL_VALIDATOR,
-        }
-        # Only offered where Home Assistant's Modbus connection takes a
-        # request timeout; otherwise its default applies.
-        # HA-COMPAT(2026.10): always offer the field.
-        if timeout_supported():
-            schema[
-                vol.Optional(
-                    CONF_TIMEOUT,
-                    description={
-                        "suggested_value": self.config_entry.options.get(
-                            CONF_TIMEOUT, DEFAULT_TIMEOUT
-                        )
-                    },
-                )
-            ] = vol.All(vol.Coerce(float), vol.Range(min=MIN_TIMEOUT, max=MAX_TIMEOUT))
-        schema[
-            vol.Optional(
-                CONF_MESSAGE_SPACING,
-                description={
-                    "suggested_value": self.config_entry.options.get(
-                        CONF_MESSAGE_SPACING, DEFAULT_MESSAGE_SPACING
-                    )
-                },
-            )
-        ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_MESSAGE_SPACING))
         options = self.config_entry.options
+        schema: dict[Any, Any] = {
+            vol.Required(
+                CONF_HEAT_PUMP_CONTROLLER, default=heat_pump_controller(options)
+            ): CONTROLLER_SELECTOR,
+        }
         for hc in HEATING_CIRCUITS:
             if hc is not HEATING_CIRCUIT_1:
                 schema[
@@ -619,11 +658,6 @@ class HovalUnofficialOptionsFlow(config_entries.OptionsFlow):
                     )
                 ] = bool
         schema[vol.Required(CONF_DHW_PRESENT, default=dhw_present(options))] = bool
-        schema[
-            vol.Required(
-                CONF_HEAT_PUMP_CONTROLLER, default=heat_pump_controller(options)
-            )
-        ] = CONTROLLER_SELECTOR
         return self.async_show_form(
             step_id="general",
             data_schema=vol.Schema(schema),

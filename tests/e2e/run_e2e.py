@@ -218,6 +218,11 @@ def add_integration(token: str) -> str:
         body={"handler": "hoval_unofficial", "show_advanced_options": False},
         token=token,
     )
+    # A small range like the device ID's would otherwise show a slider.
+    for name in ("port", "device_id"):
+        number = form_fields(flow)[name].get("selector", {}).get("number", {})
+        if number.get("mode") != "box":
+            raise SystemExit(f"The {name} isn't an input field: {form_fields(flow)[name]}")
     result = request(
         "POST",
         f"/api/config/config_entries/flow/{flow['flow_id']}",
@@ -226,7 +231,6 @@ def add_integration(token: str) -> str:
             "host": MODBUS_HOST,
             "port": MODBUS_PORT,
             "device_id": MODBUS_DEVICE_ID,
-            "scan_interval": 30,
         },
         token=token,
     )
@@ -422,45 +426,91 @@ def wait_until_polling(token: str) -> None:
     raise SystemExit("Entities did not become available again after saving options")
 
 
-def check_timeout_option(token: str, entry_id: str) -> None:
+def open_reconfigure_form(token: str, entry_id: str) -> dict:
+    form = request(
+        "POST",
+        "/api/config/config_entries/flow",
+        body={"handler": "hoval_unofficial", "entry_id": entry_id},
+        token=token,
+    )
+    if form.get("type") != "form" or form.get("step_id") != "reconfigure":
+        raise SystemExit(f"Reconfigure did not open its form: {form}")
+    return form
+
+
+def advanced_values(form: dict) -> dict:
+    """The suggested values in the reconfigure form's collapsed section."""
+    section = form_fields(form)["advanced"]
+    return {
+        field["name"]: (field.get("description") or {}).get("suggested_value")
+        for field in section["schema"]
+    }
+
+
+def reconfigure_and_wait_for_reload(token: str, entry_id: str, advanced: dict) -> None:
+    """Saves the connection with the given advanced settings and waits until
+    the entry has reloaded: with a gap, a poll takes several seconds and the
+    reload waits for it, while the entities of the old entry still show
+    values."""
+    before = entity_state(token, "_outdoor_temperature")["last_updated"]
+    form = open_reconfigure_form(token, entry_id)
+    result = request(
+        "POST",
+        f"/api/config/config_entries/flow/{form['flow_id']}",
+        body={
+            "name": ENTRY_NAME,
+            "host": MODBUS_HOST,
+            "port": MODBUS_PORT,
+            "device_id": MODBUS_DEVICE_ID,
+            "advanced": advanced,
+        },
+        token=token,
+    )
+    if result.get("reason") != "reconfigure_successful":
+        raise SystemExit(f"Reconfigure did not save: {result}")
+    wait_for_attribute(
+        token,
+        "_outdoor_temperature",
+        lambda s: s["last_updated"] != before and s["state"] not in ("unknown", "unavailable"),
+    )
+
+
+def check_connection_options(token: str, entry_id: str) -> None:
+    """Polling interval, timeout and gap are set in the reconfigure step; an
+    emptied field goes back to its default."""
     version = request("GET", "/api/config", token=token)["version"]
     # HA-COMPAT(2026.10): drop the check for a missing field.
     supported = tuple(int(part) for part in version.split(".")[:2]) >= (2026, 10)
-    fields = form_fields(open_general_form(token, entry_id))
-    if ("timeout" in fields) != supported:
+    values = advanced_values(open_reconfigure_form(token, entry_id))
+    if ("timeout" in values) != supported:
         raise SystemExit(
-            f"Timeout option offered: {'timeout' in fields}, expected {supported} "
+            f"Timeout option offered: {'timeout' in values}, expected {supported} "
             f"on Home Assistant {version}"
         )
-    if not supported:
-        print(f"OK: no timeout option on Home Assistant {version}")
-        return
+    if "scan_interval" in form_fields(open_general_form(token, entry_id)):
+        raise SystemExit("The options still offer the polling interval")
 
-    result = submit_form(
-        token, open_general_form(token, entry_id), {"scan_interval": 30, "timeout": 5}
-    )
-    if result.get("type") != "create_entry":
-        raise SystemExit(f"Options flow did not save the timeout: {result}")
-    field = form_fields(open_general_form(token, entry_id))["timeout"]
-    if (field.get("description") or {}).get("suggested_value") != 5:
-        raise SystemExit(f"Timeout was not stored: {field}")
-    wait_until_polling(token)
+    changed = {"scan_interval": 30, "message_spacing": 200}
+    if supported:
+        changed["timeout"] = 5
+    reconfigure_and_wait_for_reload(token, entry_id, changed)
+    values = advanced_values(open_reconfigure_form(token, entry_id))
+    if any(values[key] != value for key, value in changed.items()):
+        raise SystemExit(f"Connection options were not stored: {values}")
 
-    # An emptied field goes back to DEFAULT_TIMEOUT.
-    result = submit_form(token, open_general_form(token, entry_id), {"scan_interval": 30})
-    if result.get("type") != "create_entry":
-        raise SystemExit(f"Options flow did not save: {result}")
-    field = form_fields(open_general_form(token, entry_id))["timeout"]
-    if (field.get("description") or {}).get("suggested_value") != 3.0:
-        raise SystemExit(f"Timeout did not go back to the default: {field}")
-    wait_until_polling(token)
-    print(f"OK: timeout option works on Home Assistant {version}")
+    reconfigure_and_wait_for_reload(token, entry_id, {})
+    values = advanced_values(open_reconfigure_form(token, entry_id))
+    defaults = {"scan_interval": 20, "message_spacing": 0}
+    if supported:
+        defaults["timeout"] = 3.0
+    if any(values[key] != value for key, value in defaults.items()):
+        raise SystemExit(f"Emptied connection options didn't go back to the defaults: {values}")
+    print(f"OK: polling interval, timeout and gap are set when reconfiguring ({version})")
 
 
 def submit_general_and_wait_for_reload(token: str, entry_id: str, data: dict) -> None:
-    """Saves the general options and waits until the entry has reloaded: with
-    a gap, a poll takes several seconds and the reload waits for it, while
-    the entities of the old entry still show values."""
+    """Saves the installation options and waits until the entry has
+    reloaded and polls again."""
     before = entity_state(token, "_outdoor_temperature")["last_updated"]
     result = submit_form(token, open_general_form(token, entry_id), data)
     if result.get("type") != "create_entry":
@@ -470,22 +520,6 @@ def submit_general_and_wait_for_reload(token: str, entry_id: str, data: dict) ->
         "_outdoor_temperature",
         lambda s: s["last_updated"] != before and s["state"] not in ("unknown", "unavailable"),
     )
-
-
-def check_message_spacing_option(token: str, entry_id: str) -> None:
-    submit_general_and_wait_for_reload(
-        token, entry_id, {"scan_interval": 30, "message_spacing": 200}
-    )
-    field = form_fields(open_general_form(token, entry_id))["message_spacing"]
-    if (field.get("description") or {}).get("suggested_value") != 200:
-        raise SystemExit(f"Gap was not stored: {field}")
-
-    # An emptied field goes back to no gap.
-    submit_general_and_wait_for_reload(token, entry_id, {"scan_interval": 30})
-    field = form_fields(open_general_form(token, entry_id))["message_spacing"]
-    if (field.get("description") or {}).get("suggested_value") != 0:
-        raise SystemExit(f"Gap did not go back to the default: {field}")
-    print("OK: the gap between requests is stored and polling goes on")
 
 
 def form_fields(form: dict) -> dict:
@@ -710,7 +744,7 @@ def check_heat_pump_controller(token: str, entry_id: str) -> None:
     write_sim(HEAT_PUMP_STATUS, 10)
     wait_for_attribute(token, status, lambda s: s["state"] == "unknown_status")
     submit_general_and_wait_for_reload(
-        token, entry_id, {"scan_interval": 30, "heat_pump_controller": "ecr461"}
+        token, entry_id, {"heat_pump_controller": "ecr461"}
     )
     wait_for_attribute(token, status, lambda s: s["state"] == "heating_mode")
     if meter_sensor_disabled_by(token, entry_id) != "integration":
@@ -719,7 +753,7 @@ def check_heat_pump_controller(token: str, entry_id: str) -> None:
     if schema["meters"] or schema["heat_pump"]["cop"] or schema["heat_pump"]["power"]:
         raise SystemExit(f"The schema lists meter values for the ECR461: {schema['heat_pump']}")
     submit_general_and_wait_for_reload(
-        token, entry_id, {"scan_interval": 30, "heat_pump_controller": "wfa"}
+        token, entry_id, {"heat_pump_controller": "wfa"}
     )
     wait_for_attribute(token, status, lambda s: s["state"] == "unknown_status")
     if meter_sensor_disabled_by(token, entry_id) is not None:
@@ -733,14 +767,14 @@ def check_heat_pump_controller(token: str, entry_id: str) -> None:
 
 def check_dhw_bottom_sensor(token: str, entry_id: str) -> None:
     """The hot water tank's bottom sensor reads 0 without the sensor; it is
-    found when the general options are saved, e.g. after fitting it."""
+    found when the installation options are saved, e.g. after fitting it."""
     states = request("GET", "/api/states", token=token)
     if any(s["entity_id"].endswith(DHW_BOTTOM_SENSOR) for s in states):
         raise SystemExit("The hot water bottom sensor exists although it reads 0")
     write_sim(DHW_BOTTOM_TEMP, 412)
-    submit_general_and_wait_for_reload(token, entry_id, {"scan_interval": 30})
+    submit_general_and_wait_for_reload(token, entry_id, {})
     wait_for_attribute(token, DHW_BOTTOM_SENSOR, lambda s: s["state"] == "41.2")
-    print("OK: the hot water bottom sensor is found when the general options are saved")
+    print("OK: the hot water bottom sensor is found when the installation options are saved")
 
 
 def check_sensor_detection(token: str, entry_id: str) -> None:
@@ -1454,8 +1488,7 @@ def main() -> None:
     check_unanswered_registers(token, entry_id)
     check_diagnostics(token, entry_id)
     check_schema_card(token, entry_id)
-    check_timeout_option(token, entry_id)
-    check_message_spacing_option(token, entry_id)
+    check_connection_options(token, entry_id)
     check_heat_pump_controller(token, entry_id)
     check_dhw_bottom_sensor(token, entry_id)
     check_sending(token, entry_id)

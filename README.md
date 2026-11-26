@@ -89,7 +89,6 @@ restart Home Assistant.
    - **IP address** of the controller
    - **Port** (default: 502)
    - **Modbus device ID** (default: 1)
-   - optional: polling interval in seconds (5-300, default: 20)
 
 Home Assistant tests the connection directly during setup. If it fails,
 an error message is shown in the dialog.
@@ -103,10 +102,10 @@ an error message is shown in the dialog.
    energy meters (only the WFA200 has them); no register tells them apart.
    The dialog suggests ECR461 if the heat pump has operating hours but both
    energy meters read 0. You can change it later under
-   [Options](#options) → General.
+   [Options](#options) → Installation.
 
-You can change the IP address, port, name, or device ID later via the
-entry's three-dot menu → **Reconfigure**.
+You can change the connection later via the entry's three-dot menu →
+**Reconfigure**, see [Connection](#connection).
 
 ## What you get
 
@@ -133,8 +132,8 @@ entry's three-dot menu → **Reconfigure**.
   temperature, target temperature, and operating mode. A tank with a second
   sensor at the bottom (SF2) also gets the sensor **Hot water temperature
   bottom**; the `water_heater` entity then shows the top sensor. The
-  integration looks for it when it is set up and whenever the general
-  options are saved.
+  integration looks for it when it is set up and whenever the options
+  under Installation are saved.
 - **Room heating circuits (HC1/HC2/HC3)** — `climate` entities for up to
   three heating circuits (not for circuits on constant control, see
   [Control strategies](#control-strategies)), and sensors for each circuit's
@@ -666,7 +665,44 @@ see 35 kWh instead, set the entity's display unit to kWh (entity settings →
 ## Options
 
 Available under the entry's cog icon (**Configure**) under **Settings →
-Devices & Services → Hoval Heat Pump Integration (unofficial)**:
+Devices & Services → Hoval Heat Pump Integration (unofficial)**. The
+form **Installation** holds the first two:
+
+- **Heat pump controller** — WFA200 or ECR461, see [Setup](#setup) for
+  the models. The status codes of the heat pump mean
+  different things on each; the **Status** sensor shows the same text for
+  the same state on both. Switching to ECR461 disables the sensors for
+  energy, power, COP and SPF, as it has no energy meters; switching back
+  to WFA200 enables them again. An installation set up before this option
+  existed gets the suggestion on its next start. The error codes mean the
+  same on both.
+- **Heating circuit 2 / 3 present, Domestic hot water present** — without
+  them, the integration neither creates their entities nor reads or writes
+  their values, and the options menu doesn't list them. Heating circuit 1 is
+  always there. When the integration is set up, or first starts without these
+  options, they are detected: a heating circuit whose flow temperature isn't
+  0 (or with an entity you had enabled), domestic hot water whose
+  temperature isn't 0 (always for an installation set up before). Turning
+  off a circuit that sends a room temperature is refused; change its source
+  first.
+- **Room temperature source** — see above, configurable per heating
+  circuit.
+
+Changing any option takes effect immediately, without needing to remove
+and re-add the integration.
+
+Entities the integration no longer creates (a circuit or function turned
+off, a strategy that doesn't allow them) are handled on the next start:
+enabled ones stay, listed by Home Assistant as no longer provided, and come
+back with their settings and history if they are created again; disabled
+ones are removed.
+
+### Connection
+
+Name, IP address, port and Modbus device ID are changed under the entry's
+three-dot menu → **Reconfigure**, which tests the connection before saving.
+Its collapsed section **Advanced** holds settings the defaults suit for most
+installations; an emptied field goes back to its default:
 
 - **Polling interval** (seconds, 5-300, default 20) — how often the integration
   reads data from the controller. Keep it at 20 seconds or less: the
@@ -685,34 +721,6 @@ Devices & Services → Hoval Heat Pump Integration (unofficial)**:
   answer requests sent right after each other. It applies to every request
   to this device ID, also those of other integrations, and each poll takes
   longer by about the gap times the number of requests.
-- **Heating circuit 2 / 3 present, Domestic hot water present** — without
-  them, the integration neither creates their entities nor reads or writes
-  their values, and the options menu doesn't list them. Heating circuit 1 is
-  always there. When the integration is set up, or first starts without these
-  options, they are detected: a heating circuit whose flow temperature isn't
-  0 (or with an entity you had enabled), domestic hot water whose
-  temperature isn't 0 (always for an installation set up before). Turning
-  off a circuit that sends a room temperature is refused; change its source
-  first.
-- **Heat pump controller** — WFA200 or ECR461, see [Setup](#setup) for
-  the models. The status codes of the heat pump mean
-  different things on each; the **Status** sensor shows the same text for
-  the same state on both. Switching to ECR461 disables the sensors for
-  energy, power, COP and SPF, as it has no energy meters; switching back
-  to WFA200 enables them again. An installation set up before this option
-  existed gets the suggestion on its next start. The error codes mean the
-  same on both.
-- **Room temperature source** — see above, configurable per heating
-  circuit.
-
-Changing any option takes effect immediately, without needing to remove
-and re-add the integration.
-
-Entities the integration no longer creates (a circuit or function turned
-off, a strategy that doesn't allow them) are handled on the next start:
-enabled ones stay, listed by Home Assistant as no longer provided, and come
-back with their settings and history if they are created again; disabled
-ones are removed.
 
 ## Troubleshooting
 

@@ -8,13 +8,12 @@
           "name": "Name",
           "host": "IP address",
           "port": "Port",
-          "device_id": "Modbus device ID",
-          "scan_interval": "Polling interval (seconds)"
+          "device_id": "Modbus device ID"
         }
       },
       "controller": {
         "title": "Heat pump controller",
-        "description": "The heat pump's own controller decides what its status codes mean and whether it has energy meters. No register tells them apart; the suggestion is based on the energy meters. Can be changed later under Options -> General.",
+        "description": "The heat pump's own controller decides what its status codes mean and whether it has energy meters. No register tells them apart; the suggestion is based on the energy meters. Can be changed later under Options -> Installation.",
         "data": {
           "heat_pump_controller": "Heat pump controller"
         }
@@ -27,6 +26,22 @@
           "host": "IP address",
           "port": "Port",
           "device_id": "Modbus device ID"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced",
+            "description": "Polling interval, timeout and gap between requests. The defaults suit most installations.",
+            "data": {
+              "scan_interval": "Polling interval (seconds)",
+              "timeout": "Modbus request timeout (seconds)",
+              "message_spacing": "Gap between Modbus requests (milliseconds)"
+            },
+            "data_description": {
+              "scan_interval": "20 seconds or less recommended: the Hoval gateway drops connections that are idle for longer, and every poll after that takes several seconds longer.",
+              "timeout": "Default: 3 s. If several integrations share the gateway, the longest timeout applies.",
+              "message_spacing": "Default: 0 (no gap). Can help if the gateway sometimes doesn't answer requests sent right after each other. Applies to all requests to this device ID over the shared connection, also those of other integrations, and makes each poll take longer."
+            }
+          }
         }
       }
     },
@@ -44,7 +59,7 @@
       "init": {
         "title": "Options",
         "menu_options": {
-          "general": "General",
+          "general": "Installation",
           "heating_circuit_1": "Heating circuit 1",
           "heating_circuit_2": "Heating circuit 2",
           "heating_circuit_3": "Heating circuit 3",
@@ -52,24 +67,17 @@
         }
       },
       "general": {
-        "title": "General",
+        "title": "Installation",
+        "description": "Without a tick, the integration neither creates entities for that part of the installation nor reads or writes its values.",
         "data": {
-          "scan_interval": "Polling interval (seconds)",
-          "timeout": "Modbus request timeout (seconds)",
-          "message_spacing": "Gap between Modbus requests (milliseconds)",
+          "heat_pump_controller": "Heat pump controller",
           "heating_circuit_2_present": "Heating circuit 2 present",
           "heating_circuit_3_present": "Heating circuit 3 present",
-          "dhw_present": "Domestic hot water present",
-          "heat_pump_controller": "Heat pump controller"
+          "dhw_present": "Domestic hot water present"
         },
         "data_description": {
-          "scan_interval": "20 seconds or less recommended: the Hoval gateway drops connections that are idle for longer, and every poll after that takes several seconds longer.",
-          "timeout": "Default: 3 s. If several integrations share the gateway, the longest timeout applies.",
-          "message_spacing": "Default: 0 (no gap). Can help if the gateway sometimes doesn't answer requests sent right after each other. Applies to all requests to this device ID over the shared connection, also those of other integrations, and makes each poll take longer.",
-          "heating_circuit_2_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
-          "heating_circuit_3_present": "Without it, the integration neither creates its entities nor reads or writes its values.",
-          "dhw_present": "Without it, the integration neither creates its entities nor reads or writes its values. Saving also looks for a second sensor at the bottom of the hot water tank, e.g. one fitted later.",
-          "heat_pump_controller": "Decides what the heat pump's status codes mean. Without energy meters (ECR461), the sensors for energy, power, COP and SPF are disabled; switching back enables them again."
+          "heat_pump_controller": "Choose the controller that matches your heat pump model; setup suggested one based on the energy meters. Without energy meters (ECR461), the sensors for energy, power, COP and SPF are disabled; switching back enables them again.",
+          "dhw_present": "After changes to the hot water tank, save once to detect the hot water sensors again."
         }
       },
       "circuit": {
@@ -147,8 +155,8 @@
     },
     "heat_pump_controller": {
       "options": {
-        "wfa": "WFA200 – Belaria pro, UltraSource, Thermalia 43 series (with energy meters)",
-        "ecr461": "ECR461 – Thermalia comfort/twin/dual, Belaria compact IR/twin/dual (no energy meters)"
+        "wfa": "WFA200 – Belaria pro, UltraSource, Thermalia 43 series",
+        "ecr461": "ECR461 – Thermalia comfort/twin/dual, Belaria compact IR/twin/dual"
       }
     }
   },
